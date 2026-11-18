@@ -13,6 +13,7 @@ give anyone the control API.
 
 Dependencies: aiohttp.
 """
+
 import argparse
 import asyncio
 import ipaddress
@@ -123,8 +124,12 @@ class Conn:
         self.lock = asyncio.Lock()
 
     def info(self) -> dict:
-        return {"id": self.id, "label": self.label, "host": self.host,
-                "connected_for_s": round(time.time() - self.connected_at)}
+        return {
+            "id": self.id,
+            "label": self.label,
+            "host": self.host,
+            "connected_for_s": round(time.time() - self.connected_at),
+        }
 
     async def _roundtrip(self, body: dict, timeout: float) -> dict:
         self.counter += 1
@@ -174,20 +179,24 @@ def make_app(tokens: dict) -> web.Application:
             hello = json.loads(first.data) if first.type == WSMsgType.TEXT else {}
         except (asyncio.TimeoutError, ValueError):
             hello = {}
-        if hello.get("type") != "hello" or not secrets.compare_digest(
-                str(hello.get("token", "")), tokens["computer"]):
+        if hello.get("type") != "hello" or not secrets.compare_digest(str(hello.get("token", "")), tokens["computer"]):
             await ws.close(code=4401, message=b"unauthorized")
             return ws
         conn = Conn(ws, hello)
         old = computers.get(conn.id)
         if old:
-            print(f"[relay {time.strftime('%H:%M:%S')}] computer #{conn.id}: replacing an older connection "
-                  f"(open {time.time() - old.connected_at:.0f}s)", flush=True)
+            print(
+                f"[relay {time.strftime('%H:%M:%S')}] computer #{conn.id}: replacing an older connection "
+                f"(open {time.time() - old.connected_at:.0f}s)",
+                flush=True,
+            )
             await old.ws.close(code=4000, message=b"replaced")
         computers[conn.id] = conn
         await ws.send_json({"type": "welcome"})
-        print(f"[relay {time.strftime('%H:%M:%S')}] computer #{conn.id} connected ({conn.label or 'no label'})",
-              flush=True)
+        print(
+            f"[relay {time.strftime('%H:%M:%S')}] computer #{conn.id} connected ({conn.label or 'no label'})",
+            flush=True,
+        )
         try:
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
@@ -206,8 +215,11 @@ def make_app(tokens: dict) -> web.Application:
             for fut in conn.pending.values():
                 if not fut.done():
                     fut.set_exception(ConnectionError())
-            print(f"[relay {time.strftime('%H:%M:%S')}] computer #{conn.id} disconnected "
-                  f"(was open {time.time() - conn.connected_at:.0f}s)", flush=True)
+            print(
+                f"[relay {time.strftime('%H:%M:%S')}] computer #{conn.id} disconnected "
+                f"(was open {time.time() - conn.connected_at:.0f}s)",
+                flush=True,
+            )
         return ws
 
     async def api_computers(request):
@@ -225,8 +237,11 @@ def make_app(tokens: dict) -> web.Application:
         target = body.pop("computer", None)
         if target is None:
             if len(computers) != 1:
+                ids = ", ".join(f"#{c}" for c in computers) or "none"
                 return web.json_response(
-                    err("no_target", f"{len(computers)} computers connected ({', '.join('#%d' % c for c in computers) or 'none'}); pass 'computer'"), status=409)
+                    err("no_target", f"{len(computers)} computers connected ({ids}); pass 'computer'"),
+                    status=409,
+                )
             conn = next(iter(computers.values()))
         else:
             conn = computers.get(int(target))
@@ -242,13 +257,20 @@ def make_app(tokens: dict) -> web.Application:
     async def serve_bridge(request):
         # public on purpose: the client script holds no secrets, and this makes
         # installing it a one-liner:  wget http://HOST:PORT/bridge.lua bridge.lua
-        return web.Response(text=(Path(__file__).parent / "bridge.lua").read_text(encoding="utf-8"),
-                            content_type="text/plain")
+        return web.Response(
+            text=(Path(__file__).parent / "bridge.lua").read_text(encoding="utf-8"), content_type="text/plain"
+        )
 
     app = web.Application()
-    app.add_routes([web.get("/ws", ws_handler), web.get("/api/computers", api_computers),
-                    web.post("/api/call", api_call), web.get("/healthz", healthz),
-                    web.get("/bridge.lua", serve_bridge)])
+    app.add_routes(
+        [
+            web.get("/ws", ws_handler),
+            web.get("/api/computers", api_computers),
+            web.post("/api/call", api_call),
+            web.get("/healthz", healthz),
+            web.get("/bridge.lua", serve_bridge),
+        ]
+    )
     return app
 
 
@@ -315,7 +337,7 @@ the existing $private rule and restart the world:
 In-game, on the computer (once per computer):
 
     wget http://{base}/bridge.lua bridge.lua
-    bridge ws://{base}/ws {tokens['computer']}
+    bridge ws://{base}/ws {tokens["computer"]}
 
 To start it automatically whenever the computer boots, also run:
 

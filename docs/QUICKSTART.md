@@ -88,4 +88,4 @@ reboot
 
 ## Tests (optional)
 
-`tests/selftest_relay.py` (relay only) and `tests/selftest_cc.py` (full run in headless CraftOS-PC, no Minecraft needed; skipped when CraftOS-PC is not installed). Protocol details and limits: [REFERENCE.md](REFERENCE.md).
+`pip install -e ".[dev]"`, then `pytest`: unit tests, relay tests with a fake computer, and a full run in headless CraftOS-PC (no Minecraft needed; skipped, with the reason shown, when the emulator is not found: set `CRAFTOS_PC` to its executable if it is installed somewhere unusual). `pytest -m "not e2e"` leaves the CraftOS-PC run out. Protocol details and limits: [REFERENCE.md](REFERENCE.md).

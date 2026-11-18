@@ -7,6 +7,7 @@ Configuration is by environment:
   CC_MCP_API_TOKEN  overrides tokens.json
   CC_MCP_FILES_ROOT local folder(s) cc_push/cc_pull may touch (no default: they refuse until set)
 """
+
 import asyncio
 import json
 
@@ -122,8 +123,7 @@ async def cc_peripherals(methods: bool = False, computer: int | None = None) -> 
 
 
 @server.tool(annotations=READ_ONLY)
-async def cc_log(lines: int = 50, errors_only: bool = False, since_error: int = 0,
-                 computer: int | None = None) -> str:
+async def cc_log(lines: int = 50, errors_only: bool = False, since_error: int = 0, computer: int | None = None) -> str:
     """Show the computer's terminal history and unattended-error log.
 
     `lines` of recent terminal text (lines marked `!` were red), plus every printError message with an
@@ -131,8 +131,7 @@ async def cc_log(lines: int = 50, errors_only: bool = False, since_error: int = 
     Pass since_error=<last_error_id from the previous call> to see only new errors; errors_only=True
     skips the terminal text.
     """
-    return await _call("log", computer, 15, lines=lines, errors_only=errors_only or None,
-                       since_error=since_error)
+    return await _call("log", computer, 15, lines=lines, errors_only=errors_only or None, since_error=since_error)
 
 
 @server.tool(annotations=CHANGES)
@@ -163,20 +162,21 @@ async def _run_calls(calls: list[dict], parallel: bool, timeout: float, computer
 
 
 @server.tool(annotations=CHANGES)
-async def cc_call(peripheral: str, method: str, args: list | None = None, timeout: float = 30,
-                  computer: int | None = None) -> str:
+async def cc_call(
+    peripheral: str, method: str, args: list | None = None, timeout: float = 30, computer: int | None = None
+) -> str:
     """Call one peripheral method and return its result(s): `peripheral.call(name, method, *args)`.
 
     `args` is a JSON list (numbers, strings, booleans; objects/arrays become Lua tables). Errors from the
     peripheral (wrong argument, bad enum value) come back as data. Getters are safe; setters, assemble/disassemble
     and similar change the live world - ask first. Setters wait for the next game tick (game must be focused)."""
-    return await _run_calls([{"peripheral": peripheral, "method": method, "args": args or []}], False,
-                            timeout, computer)
+    return await _run_calls(
+        [{"peripheral": peripheral, "method": method, "args": args or []}], False, timeout, computer
+    )
 
 
 @server.tool(annotations=CHANGES)
-async def cc_batch(calls: list[dict], parallel: bool = True, timeout: float = 30,
-                   computer: int | None = None) -> str:
+async def cc_batch(calls: list[dict], parallel: bool = True, timeout: float = 30, computer: int | None = None) -> str:
     """Run many peripheral calls in one request. `calls` = [{"peripheral": "ship_...", "method": "getSpeed",
     "args": []}, ...]. With parallel=True (default) they run concurrently, so N reads cost one game tick instead
     of N (use for sensor sweeps and control-loop style reads/writes). Each call reports its own result or error."""
@@ -186,12 +186,15 @@ async def cc_batch(calls: list[dict], parallel: bool = True, timeout: float = 30
 @server.tool(annotations=CHANGES)
 async def cc_push(local_path: str, remote_path: str, append: bool = False, computer: int | None = None) -> str:
     """Upload a local UTF-8 text file to the computer, chunked automatically; overwrites unless append=True.
-    Relative local paths are taken from the first folder in CC_MCP_FILES_ROOT; only the folders listed there are allowed.
+    Relative local paths are taken from the first folder in CC_MCP_FILES_ROOT; only the folders listed there are
+    allowed.
     Use this to deploy programs instead of pasting their source through cc_write."""
     res = await asyncio.to_thread(bc.push_file, local_path, remote_path, computer, 30, append)
     text = bc.format_result(res)
     if res.get("ok"):
-        text += f"\nuploaded {res.get('chars')} chars in {res.get('chunks')} chunk(s); remote size {res.get('size')} bytes"
+        text += (
+            f"\nuploaded {res.get('chars')} chars in {res.get('chunks')} chunk(s); remote size {res.get('size')} bytes"
+        )
     return text
 
 

@@ -59,9 +59,15 @@ This is a remote shell for a game computer. Keep the relay on loopback or a priv
 ## Development
 
 ```
-pip install -e .
-python tests/selftest_relay.py     # relay with a fake computer, no Minecraft needed
-python tests/selftest_cc.py        # end to end inside headless CraftOS-PC (skipped if it is not installed)
+pip install -e ".[dev]"
+ruff check . && ruff format --check .
+pytest                        # everything, incl. the CraftOS-PC end-to-end test if the emulator is found
+pytest -m "not e2e"           # quick run: unit and relay tests only
+python tests/selftest_cc.py   # the end-to-end test on its own
 ```
+
+The end-to-end test runs bridge.lua in headless CraftOS-PC (no Minecraft needed). It uses `CRAFTOS_PC` if set, otherwise `%LOCALAPPDATA%\CraftOS-PC\CraftOS-PC_console.exe` (Windows), `craftos` on PATH (Linux) or `/Applications/CraftOS-PC.app/Contents/MacOS/craftos` (macOS), and is skipped with the reason shown when it finds none. Tests use temporary folders and free loopback ports, never your own tokens or CraftOS-PC data.
+
+CI runs ruff and pytest on Python 3.10–3.14 on Linux, Windows and macOS. Known bugs #1 and #5 have strict `xfail` regression tests: drop the mark when fixing them.
 
 Tested with Python 3.14, CC:Tweaked on Minecraft 1.21.1 (NeoForge) and CraftOS-PC. MIT licensed.

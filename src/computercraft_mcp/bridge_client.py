@@ -4,6 +4,7 @@ Used by ccctl.py (command line) and mcp_server.py (MCP tools).
 Env: CC_MCP_URL (default http://127.0.0.1:8765), CC_MCP_API_TOKEN,
 CC_MCP_HOME (default ~/.computercraft-mcp, holds tokens.json).
 """
+
 import json
 import os
 import urllib.error
@@ -23,9 +24,12 @@ def api_token() -> str:
 def request(path: str, body: dict | None = None) -> dict:
     """GET (no body) or POST (JSON body) to the relay. Never raises for relay-side errors."""
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(URL + path, data=data, method="POST" if data else "GET",
-                                 headers={"Authorization": "Bearer " + api_token(),
-                                          "Content-Type": "application/json"})
+    req = urllib.request.Request(
+        URL + path,
+        data=data,
+        method="POST" if data else "GET",
+        headers={"Authorization": "Bearer " + api_token(), "Content-Type": "application/json"},
+    )
     try:
         with urllib.request.urlopen(req, timeout=float((body or {}).get("timeout", 30)) + 15) as r:
             return json.load(r)
@@ -44,17 +48,19 @@ def call(op: str, computer: int | None = None, timeout: float = 30, **args) -> d
 
 HINTS = {
     "relay_unreachable": "The relay is not running. Start it with `computercraft-mcp-relay` (leave it running), "
-                         "then retry. The in-game computer reconnects by itself within seconds.",
+    "then retry. The in-game computer reconnects by itself within seconds.",
     "no_target": "Several computers are connected: repeat the call with computer=<id> (cc_computers lists them).",
-    "not_connected": "That computer is offline (world closed, chunk unloaded, or bridge stopped). cc_computers shows who is connected.",
-    "disconnected": "The computer dropped mid-request (chunk unload, reboot or world exit). Check cc_computers, then retry.",
+    "not_connected": "That computer is offline (world closed, chunk unloaded, or bridge stopped). "
+    "cc_computers shows who is connected.",
+    "disconnected": "The computer dropped mid-request (chunk unload, reboot or world exit). "
+    "Check cc_computers, then retry.",
     "busy": "A previous request is still running on that computer. Call cc_cancel, then retry. If this keeps happening "
-            "the game is probably paused or unfocused: yielding peripheral calls only progress while the game is ticking.",
-    "relay_timeout": "The computer did not answer even its own timeout timer, which almost always means Minecraft is paused/unfocused "
-                     "or the computer's chunk is not loaded. A cancel was queued for it. Focus the game and retry; "
-                     "use cc_ping to see if it answers at all.",
+    "the game is probably paused or unfocused: yielding peripheral calls only progress while the game is ticking.",
+    "relay_timeout": "The computer did not answer even its own timeout timer, which almost always means Minecraft "
+    "is paused/unfocused or the computer's chunk is not loaded. A cancel was queued for it. Focus the game and retry; "
+    "use cc_ping to see if it answers at all.",
     "timeout": "The request ran past its timeout and was abandoned on the computer. Raise `timeout`, split the work, "
-               "or (for peripheral setters) make sure the game is focused and unpaused.",
+    "or (for peripheral setters) make sure the game is focused and unpaused.",
 }
 
 
@@ -112,21 +118,26 @@ def files_roots() -> list[Path]:
 
 
 def resolve_local(path: str) -> Path:
-    """Resolve `path` (relative paths are taken from the first allowed folder) and refuse anything outside the allowed ones."""
+    """Resolve `path` (relative paths are taken from the first allowed folder).
+
+    Refuses anything outside the allowed folders."""
     roots = files_roots()
     if not roots:
-        raise PermissionError("file transfer is disabled: set CC_MCP_FILES_ROOT to the local folder(s) "
-                              "cc_push/cc_pull may read and write (several folders separated by the OS path separator)")
+        raise PermissionError(
+            "file transfer is disabled: set CC_MCP_FILES_ROOT to the local folder(s) "
+            "cc_push/cc_pull may read and write (several folders separated by the OS path separator)"
+        )
     p = Path(path).expanduser()
     p = (p if p.is_absolute() else roots[0] / p).resolve()
     if not any(p == r or r in p.parents for r in roots):
-        raise PermissionError(f"{p} is outside the allowed folders ({', '.join(str(r) for r in roots)}); "
-                              "add the folder to CC_MCP_FILES_ROOT to allow it")
+        raise PermissionError(
+            f"{p} is outside the allowed folders ({', '.join(str(r) for r in roots)}); "
+            "add the folder to CC_MCP_FILES_ROOT to allow it"
+        )
     return p
 
 
-def push_file(local: str, remote: str, computer: int | None = None, timeout: float = 30,
-              append: bool = False) -> dict:
+def push_file(local: str, remote: str, computer: int | None = None, timeout: float = 30, append: bool = False) -> dict:
     """Upload a local UTF-8 text file in chunks that fit the relay's request limit."""
     try:
         with open(resolve_local(local), encoding="utf-8", newline="") as fh:  # newline="": keep CRLF/LF exactly
@@ -137,7 +148,7 @@ def push_file(local: str, remote: str, computer: int | None = None, timeout: flo
     while True:
         n = 60000
         while True:  # shrink until the JSON-escaped chunk fits (non-ASCII text escapes to 6 bytes per char)
-            piece = text[pos:pos + n]
+            piece = text[pos : pos + n]
             if len(json.dumps(piece)) <= 75000 or n <= 500:
                 break
             n //= 2

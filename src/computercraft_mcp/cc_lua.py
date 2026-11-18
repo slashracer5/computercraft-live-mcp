@@ -3,6 +3,7 @@
 They run through the ordinary `exec` op, so the in-game bridge.lua needs no change. Every snippet
 returns ONE JSON string (textutils.serialiseJSON) so the Python side can parse it back.
 """
+
 import json
 
 
@@ -142,14 +143,16 @@ def format_network(doc: dict) -> str:
             if d.get("methods_error"):
                 lines.append(f"  {d['name']}: methods error: {d['methods_error']}")
     lines.append("")
-    lines.append("Names can change after rewiring or rebuilding (ship_* zone names derive from the bow): "
-                 "find peripherals by name prefix at run time, do not hard-code them.")
+    lines.append(
+        "Names can change after rewiring or rebuilding (ship_* zone names derive from the bow): "
+        "find peripherals by name prefix at run time, do not hard-code them."
+    )
     return "\n".join(lines)
 
 
 def format_calls(doc: dict, calls: list[dict]) -> str:
     lines = [f"{doc.get('n', len(calls))} call(s) in {doc.get('elapsed_ms', '?')} ms"]
-    for call, res in zip(calls, doc.get("results") or []):
+    for call, res in zip(calls, doc.get("results") or [], strict=False):
         head = f"{call['peripheral']}.{call['method']}({', '.join(json.dumps(a) for a in call.get('args') or [])})"
         if res.get("ok"):
             vals = res.get("values") or []
