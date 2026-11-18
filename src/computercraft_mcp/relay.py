@@ -15,9 +15,12 @@ Dependencies: aiohttp.
 """
 import argparse
 import asyncio
+import ipaddress
 import json
 import os
 import secrets
+import socket
+import sys
 import time
 from pathlib import Path
 
@@ -249,20 +252,67 @@ def make_app(tokens: dict) -> web.Application:
     return app
 
 
+def _default_route_address(bind_host: str) -> str:
+    family, destination = {
+        "0.0.0.0": (socket.AF_INET, "192.0.2.1"),
+        "::": (socket.AF_INET6, "2001:db8::1"),
+    }[bind_host]
+    # A UDP connect selects an interface without sending a packet.
+    with socket.socket(family, socket.SOCK_DGRAM) as route:
+        route.connect((destination, 9))
+        return route.getsockname()[0]
+
+
+def _is_loopback(host: str) -> bool:
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return host.lower() == "localhost"
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        return address.ipv4_mapped.is_loopback
+    return address.is_loopback
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--show-tokens", action="store_true", help="print both tokens and exit")
     p.add_argument("--setup", action="store_true", help="print the exact in-game commands and exit")
+    p.add_argument(
+        "--advertise-host",
+        help="host or IP for --setup (defaults to the bind host or a detected local IP)",
+    )
     a = p.parse_args()
+    if a.setup and not a.show_tokens:
+        host = (a.advertise_host or a.host).removeprefix("[").removesuffix("]")
+        if a.advertise_host is None and host in {"0.0.0.0", "::"}:
+            try:
+                host = _default_route_address(host)
+            except OSError:
+                p.error("could not detect a local IP address; set --advertise-host")
+            print(
+                f"[relay] using detected address {host}; set --advertise-host if unreachable from the game",
+                file=sys.stderr,
+            )
+        if host in {"0.0.0.0", "::"}:
+            p.error("--advertise-host must be an address that the game can connect to")
     tokens = load_tokens()
     if a.show_tokens:
         print(json.dumps(tokens, indent=2))
         return
     if a.setup:
-        base = f"{a.host}:{a.port}"
-        print(f"""In-game, on the computer (once per computer):
+        url_host = f"[{host}]" if ":" in host else host
+        base = f"{url_host}:{a.port}"
+        print(f"""On a server you control, add this to the CC:Tweaked server config above
+the existing $private rule and restart the world:
+
+    [[http.rules]]
+        host = {json.dumps(host, ensure_ascii=False)}
+        port = {a.port}
+        action = "allow"
+
+In-game, on the computer (once per computer):
 
     wget http://{base}/bridge.lua bridge.lua
     bridge ws://{base}/ws {tokens['computer']}
@@ -276,6 +326,13 @@ To start it automatically whenever the computer boots, also run:
 The relay must be running (computercraft-mcp-relay), but the order does not matter: the bridge retries
 until the relay is up. `exit` in the computer's shell stops the bridge.""")
         return
+    if not _is_loopback(a.host):
+        print(
+            "[relay] warning: non-loopback listener uses plain HTTP/WebSocket and sends tokens "
+            "without encryption. Use only on a trusted network. "
+            "https://github.com/slashracer5/computercraft-mcp/blob/main/SECURITY.md",
+            file=sys.stderr,
+        )
     print(f"[relay] listening on {a.host}:{a.port}; tokens in {HOME / 'tokens.json'}", flush=True)
     web.run_app(make_app(tokens), host=a.host, port=a.port, print=None)
 
