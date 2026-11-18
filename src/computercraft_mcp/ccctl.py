@@ -16,6 +16,7 @@ Shared flags (before or after the subcommand): --json  --computer ID  --timeout 
 Env: CC_MCP_URL, CC_MCP_API_TOKEN, CC_MCP_HOME (see bridge_client.py).
 Exit status is 1 when the call failed or the remote operation reported an error.
 """
+
 import argparse
 import json
 import sys
@@ -30,19 +31,32 @@ def main() -> int:
     common.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     common.add_argument("--computer", type=int, default=argparse.SUPPRESS)
     common.add_argument("--timeout", type=float, default=argparse.SUPPRESS)
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
-                                parents=[common])
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter, parents=[common]
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("computers", "ping", "cancel"):
         sub.add_parser(name, parents=[common])
-    s = sub.add_parser("exec", parents=[common]); s.add_argument("code"); s.add_argument("--reset", action="store_true")
-    s = sub.add_parser("shell", parents=[common]); s.add_argument("command")
-    s = sub.add_parser("read", parents=[common]); s.add_argument("path"); s.add_argument("--offset", type=int, default=0)
-    s = sub.add_parser("write", parents=[common]); s.add_argument("path"); s.add_argument("--file"); s.add_argument("--append", action="store_true")
-    s = sub.add_parser("ls", parents=[common]); s.add_argument("path", nargs="?", default="")
-    s = sub.add_parser("periph", parents=[common]); s.add_argument("--methods", action="store_true")
-    s = sub.add_parser("log", parents=[common]); s.add_argument("--lines", type=int, default=50)
-    s.add_argument("--errors-only", action="store_true"); s.add_argument("--since-error", type=int, default=0)
+    s = sub.add_parser("exec", parents=[common])
+    s.add_argument("code")
+    s.add_argument("--reset", action="store_true")
+    s = sub.add_parser("shell", parents=[common])
+    s.add_argument("command")
+    s = sub.add_parser("read", parents=[common])
+    s.add_argument("path")
+    s.add_argument("--offset", type=int, default=0)
+    s = sub.add_parser("write", parents=[common])
+    s.add_argument("path")
+    s.add_argument("--file")
+    s.add_argument("--append", action="store_true")
+    s = sub.add_parser("ls", parents=[common])
+    s.add_argument("path", nargs="?", default="")
+    s = sub.add_parser("periph", parents=[common])
+    s.add_argument("--methods", action="store_true")
+    s = sub.add_parser("log", parents=[common])
+    s.add_argument("--lines", type=int, default=50)
+    s.add_argument("--errors-only", action="store_true")
+    s.add_argument("--since-error", type=int, default=0)
     a = p.parse_args()
     as_json = getattr(a, "json", False)
     computer = getattr(a, "computer", None)
@@ -68,8 +82,9 @@ def main() -> int:
     elif a.cmd == "periph":
         res = bc.call("peripherals", computer, timeout, methods=a.methods or None)
     elif a.cmd == "log":
-        res = bc.call("log", computer, timeout, lines=a.lines, errors_only=a.errors_only or None,
-                      since_error=a.since_error)
+        res = bc.call(
+            "log", computer, timeout, lines=a.lines, errors_only=a.errors_only or None, since_error=a.since_error
+        )
     print(json.dumps(res, indent=2) if as_json else bc.format_result(res))
     return 0 if res.get("ok", False) else 1
 

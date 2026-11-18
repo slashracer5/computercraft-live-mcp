@@ -566,62 +566,61 @@ if _G.__claude_bridge_running then error("the bridge is already running on this 
 _G.__claude_bridge_running = true
 
 local function main()
-dbg("bridge main start, clock " .. os.clock())
-term.redirect(tee)
-tee.clear()
-tee.setCursorPos(1, 1)
-say("started (#" .. os.getComputerID() .. "); `exit` stops it")
-startHost()
-tryConnect()
+  dbg("bridge main start, clock " .. os.clock())
+  term.redirect(tee)
+  tee.clear()
+  tee.setCursorPos(1, 1)
+  say("started (#" .. os.getComputerID() .. "); `exit` stops it")
+  startHost()
+  tryConnect()
 
-while not hostDone do
-  local ev = table.pack(os.pullEventRaw())
-  local name, a = ev[1], ev[2]
-  local mine = false
-  if name == "websocket_success" and a == url then
-    mine = true
-    onWsSuccess(ev[3])
-  elseif name == "websocket_failure" and a == url then
-    mine = true
-    onWsFailure(ev[3])
-  elseif name == "websocket_message" and a == url then
-    mine = true
-    onWsMessage(ev[3])
-  elseif name == "websocket_closed" and a == url then
-    mine = true
-    onWsClosed()
-  elseif name == "timer" then
-    if a == conn.retryTimer then
+  while not hostDone do
+    local ev = table.pack(os.pullEventRaw())
+    local name, a = ev[1], ev[2]
+    local mine = false
+    if name == "websocket_success" and a == url then
       mine = true
-      tryConnect()
-    elseif a == conn.helloTimer then
+      onWsSuccess(ev[3])
+    elseif name == "websocket_failure" and a == url then
       mine = true
-      conn.helloTimer = nil
-      if conn.state == "hello" then closeConn(); scheduleRetry(5) end
-    elseif a == hostRestartTimer then
+      onWsFailure(ev[3])
+    elseif name == "websocket_message" and a == url then
       mine = true
-      hostRestartTimer = nil
-      startHost()
-    elseif job and a == job.timer then
+      onWsMessage(ev[3])
+    elseif name == "websocket_closed" and a == url then
       mine = true
-      finish(fail("timeout", "request exceeded its timeout and was abandoned"))
+      onWsClosed()
+    elseif name == "timer" then
+      if a == conn.retryTimer then
+        mine = true
+        tryConnect()
+      elseif a == conn.helloTimer then
+        mine = true
+        conn.helloTimer = nil
+        if conn.state == "hello" then closeConn(); scheduleRetry(5) end
+      elseif a == hostRestartTimer then
+        mine = true
+        hostRestartTimer = nil
+        startHost()
+      elseif job and a == job.timer then
+        mine = true
+        finish(fail("timeout", "request exceeded its timeout and was abandoned"))
+      end
+    elseif name == "term_resize" then
+      local w, h = startTerm.getSize()
+      visible.reposition(1, 1, w, h)
+      shadow.reposition(1, 1, w, h)
     end
-  elseif name == "term_resize" then
-    local w, h = startTerm.getSize()
-    visible.reposition(1, 1, w, h)
-    shadow.reposition(1, 1, w, h)
-  end
-  if not mine then
-    if job then
-      if job.filter == nil or job.filter == name or name == "terminate" then step(ev) end
-      queueHost(ev) -- the shell sees it once the request is done
-    else
-      resumeHost(ev)
+    if not mine then
+      if job then
+        if job.filter == nil or job.filter == name or name == "terminate" then step(ev) end
+        queueHost(ev) -- the shell sees it once the request is done
+      else
+        resumeHost(ev)
+      end
     end
+    if not job and #hostQueue > 0 then flushQueue() end
   end
-  if not job and #hostQueue > 0 then flushQueue() end
-end
-
 end -- main
 
 local ok, err = pcall(main)

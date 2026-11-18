@@ -6,6 +6,7 @@ Runs everything in a temp folder on port 18767 and never touches your own CraftO
 CraftOS-PC is a stand-in for CC:Tweaked: it caught real bridge bugs (stale websocket events
 after a reboot), but the in-game test remains the final word.
 """
+
 import json
 import os
 import shutil
@@ -22,6 +23,7 @@ TMP = Path(tempfile.mkdtemp(prefix="ccmcp_cc_"))
 os.environ["CC_MCP_HOME"] = str(TMP / "home")
 os.environ["CC_MCP_URL"] = f"http://127.0.0.1:{PORT}"
 from computercraft_mcp import bridge_client as bc  # noqa: E402  (reads the env vars above at import)
+
 BRIDGE_LUA = Path(bc.__file__).parent / "bridge.lua"
 
 results = []
@@ -34,8 +36,12 @@ def check(name, cond, detail=""):
 
 
 def start_relay():
-    procs["relay"] = subprocess.Popen([sys.executable, "-m", "computercraft_mcp.relay", "--port", str(PORT)],
-                                      env=os.environ.copy(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    procs["relay"] = subprocess.Popen(
+        [sys.executable, "-m", "computercraft_mcp.relay", "--port", str(PORT)],
+        env=os.environ.copy(),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def stop(name):
@@ -72,20 +78,39 @@ def exec_(code, **kw):
     return call("exec", code=code, **kw)
 
 
-TYPE = ('local function t(s) for ch in s:gmatch(".") do os.queueEvent("char", ch) end '
-        'os.queueEvent("key", keys.enter, false) end ')
+TYPE = (
+    'local function t(s) for ch in s:gmatch(".") do os.queueEvent("char", ch) end '
+    'os.queueEvent("key", keys.enter, false) end '
+)
 
 
 async def mcp_checks():
     os.environ["CC_MCP_FILES_ROOT"] = str(TMP)
     """Drive the MCP server through a real MCP client over stdio."""
     from mcp import Client, StdioServerParameters
-    params = StdioServerParameters(command=sys.executable, args=["-m", "computercraft_mcp.mcp_server"],
-                                   env=dict(os.environ), cwd=str(HERE))
+
+    params = StdioServerParameters(
+        command=sys.executable, args=["-m", "computercraft_mcp.mcp_server"], env=dict(os.environ), cwd=str(HERE)
+    )
     async with Client(params) as client:
         names = {t.name for t in (await client.list_tools()).tools}
-        want = {"cc_computers", "cc_ping", "cc_exec", "cc_shell", "cc_read", "cc_write", "cc_list",
-                "cc_peripherals", "cc_log", "cc_cancel", "cc_network", "cc_call", "cc_batch", "cc_push", "cc_pull"}
+        want = {
+            "cc_computers",
+            "cc_ping",
+            "cc_exec",
+            "cc_shell",
+            "cc_read",
+            "cc_write",
+            "cc_list",
+            "cc_peripherals",
+            "cc_log",
+            "cc_cancel",
+            "cc_network",
+            "cc_call",
+            "cc_batch",
+            "cc_push",
+            "cc_pull",
+        }
         check("MCP lists all cc_* tools", want <= names, str(want - names))
 
         async def text(name, args):
@@ -131,22 +156,33 @@ async def mcp_checks():
         check("fake peripherals installed", "faked" in t, t)
         t = await text("cc_network", {"methods": True})
         check("cc_network groups by type", "type widget  x2" in t and "dev_a, dev_b" in t, t)
-        check("cc_network lists methods once per group", t.count("methods:") == 1 and "getX, setY" in t.replace("boom, ", ""), t)
+        check(
+            "cc_network lists methods once per group",
+            t.count("methods:") == 1 and "getX, setY" in t.replace("boom, ", ""),
+            t,
+        )
         t = await text("cc_call", {"peripheral": "dev_a", "method": "setY", "args": [2, 40]})
         check("cc_call returns value", "-> 42" in t, t)
         t = await text("cc_call", {"peripheral": "dev_a", "method": "getX"})
-        check("cc_call multiple returns", "-> 5, \"five\"" in t, t)
+        check("cc_call multiple returns", '-> 5, "five"' in t, t)
         t = await text("cc_call", {"peripheral": "dev_a", "method": "boom"})
         check("cc_call peripheral error is data", "ERROR" in t and "expected left_handed" in t, t)
-        calls = [{"peripheral": "dev_a", "method": "getX"}, {"peripheral": "dev_b", "method": "getX"},
-                 {"peripheral": "dev_a", "method": "setY", "args": [1, 1]}]
+        calls = [
+            {"peripheral": "dev_a", "method": "getX"},
+            {"peripheral": "dev_b", "method": "getX"},
+            {"peripheral": "dev_a", "method": "setY", "args": [1, 1]},
+        ]
         import re
+
         t = await text("cc_batch", {"calls": calls, "parallel": True})
         par = int(re.search(r"in (\d+) ms", t).group(1))
         t2 = await text("cc_batch", {"calls": calls, "parallel": False})
         seq = int(re.search(r"in (\d+) ms", t2).group(1))
-        check("cc_batch parallel is faster than sequential", par < seq and "-> 2" in t and t.count("-> ") == 3,
-              f"parallel {par} ms, sequential {seq} ms: {t}")
+        check(
+            "cc_batch parallel is faster than sequential",
+            par < seq and "-> 2" in t and t.count("-> ") == 3,
+            f"parallel {par} ms, sequential {seq} ms: {t}",
+        )
         t = await text("cc_batch", {"calls": [{"peripheral": "dev_a"}]})
         check("cc_batch validates calls", "bad_request" in t, t)
         t = await text("cc_exec", {"code": "for k, v in pairs(__realp) do peripheral[k] = v end return 'restored'"})
@@ -157,7 +193,11 @@ async def mcp_checks():
         src = TMP / "push_src.txt"
         src.write_text(big, encoding="utf-8", newline="")
         t = await text("cc_push", {"local_path": str(src), "remote_path": "pushed.txt"})
-        check("cc_push chunks a 150 KB file", t.startswith("OK") and "chunk(s)" in t and "3 chunk" in t.replace("4 chunk", "3 chunk"), t)
+        check(
+            "cc_push chunks a 150 KB file",
+            t.startswith("OK") and "chunk(s)" in t and "3 chunk" in t.replace("4 chunk", "3 chunk"),
+            t,
+        )
         t = await text("cc_exec", {"code": "return #fs.open('pushed.txt','rb').readAll()"})
         check("remote size matches", str(len(big.encode("utf-8"))) in t, t + f" want {len(big.encode('utf-8'))}")
         dst = TMP / "pulled.txt"
@@ -184,18 +224,27 @@ def main():
     time.sleep(1.5)
     token = json.loads((TMP / "home" / "tokens.json").read_text())["computer"]
     (comp / ".bridge.json").write_text(json.dumps({"url": f"ws://127.0.0.1:{PORT}/ws", "token": token}))
-    procs["emu"] = subprocess.Popen([str(EMU), "--headless", "-d", str(data), "--id", "0"], cwd=data,
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    procs["emu"] = subprocess.Popen(
+        [str(EMU), "--headless", "-d", str(data), "--id", "0"],
+        cwd=data,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
     check("boots via startup.lua and connects", wait_for(lambda: computers(), 30))
 
     r = exec_("return 40 + 2")
     check("exec expression", r.get("ok") and r["returns"] == ["42"], str(r))
     r = exec_("local t = nil; return t.x")
-    check("runtime error captured with traceback", r["error"]["kind"] == "runtime" and r["error"].get("traceback"), str(r))
+    check(
+        "runtime error captured with traceback", r["error"]["kind"] == "runtime" and r["error"].get("traceback"), str(r)
+    )
     r = call("shell", command="broken")
-    check("program crash via bridge: exit error + stderr",
-          r["error"]["kind"] == "exit" and any("blew up" in s for s in r["stderr"]), str(r))
+    check(
+        "program crash via bridge: exit error + stderr",
+        r["error"]["kind"] == "exit" and any("blew up" in s for s in r["stderr"]),
+        str(r),
+    )
 
     # ---- the log tee: errors from programs the bridge did not run
     base = call("log", lines=5)["last_error_id"]
@@ -203,7 +252,7 @@ def main():
     ok = wait_for(lambda: call("log", errors_only=True, since_error=base)["errors"], 10)
     log = call("log", lines=20)
     check("hand-typed program error reaches the unattended log", ok)
-    check("terminal log shows its output", any("blew up" in l for l in log.get("lines", [])), str(log)[:300])
+    check("terminal log shows its output", any("blew up" in line for line in log.get("lines", [])), str(log)[:300])
     check("red text is flagged", bool(log.get("red")), str(log.get("red")))
     before = call("log", lines=1)["last_error_id"]
     call("shell", command="broken")
@@ -212,12 +261,15 @@ def main():
     # ---- keystrokes during a request are held and replayed to the hosted shell
     r = exec_(TYPE + "t('ls rom') sleep(2) print('job output only')")
     check("request output excludes shell input", r.get("output") == "job output only", str(r.get("output")))
-    check("held keystrokes replayed to hosted shell",
-          wait_for(lambda: any("apis" in l for l in call("log", lines=15).get("lines", [])), 8))
+    check(
+        "held keystrokes replayed to hosted shell",
+        wait_for(lambda: any("apis" in line for line in call("log", lines=15).get("lines", [])), 8),
+    )
 
     # ---- MCP server through a real MCP client
     try:
         import asyncio
+
         asyncio.run(mcp_checks())
     except ImportError as e:
         print(f"SKIP MCP checks ({e})")
@@ -230,13 +282,16 @@ def main():
     # ---- reboot: must come back once, and stay stable (stale-event regression)
     r = exec_("os.reboot()")
     check("reboot reported as disconnect", r.get("error", {}).get("kind") == "disconnected", str(r))
-    back = wait_for(lambda: (exec_("return os.clock()").get("ok")), 40)
+    back = wait_for(lambda: exec_("return os.clock()").get("ok"), 40)
     check("reconnects after reboot", back)
     time.sleep(8)
     comps = computers()
     pings = [call("ping").get("ok") for _ in range(4)]
-    check("stable after reboot (no connection fight)", comps and comps[0]["connected_for_s"] >= 7 and all(pings),
-          f"{comps} {pings}")
+    check(
+        "stable after reboot (no connection fight)",
+        comps and comps[0]["connected_for_s"] >= 7 and all(pings),
+        f"{comps} {pings}",
+    )
     clock = exec_("return os.clock()")["returns"][0]
     check("really restarted (small uptime)", float(clock) < 30, clock)
 

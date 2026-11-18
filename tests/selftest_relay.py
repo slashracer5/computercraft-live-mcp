@@ -3,6 +3,7 @@
 
 Run:  python tests/selftest_relay.py   (after `pip install -e .`)
 """
+
 import asyncio
 import json
 import os
@@ -28,9 +29,12 @@ def check(name, cond, detail=""):
 
 
 def http(path, body=None, token=None):
-    req = urllib.request.Request(BASE + path, data=json.dumps(body).encode() if body is not None else None,
-                                 method="POST" if body is not None else "GET",
-                                 headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+    req = urllib.request.Request(
+        BASE + path,
+        data=json.dumps(body).encode() if body is not None else None,
+        method="POST" if body is not None else "GET",
+        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+    )
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return r.status, json.load(r)
@@ -41,8 +45,11 @@ def http(path, body=None, token=None):
 async def fake_computer(tokens, stop: asyncio.Event, cid=7, behaviour=None, seen=None):
     async with aiohttp.ClientSession() as s:
         async with s.ws_connect(f"{BASE}/ws".replace("http", "ws")) as ws:
-            await ws.send_json({"type": "hello", "token": tokens["computer"], "id": cid, "label": "fake", "host": "test"})
+            await ws.send_json(
+                {"type": "hello", "token": tokens["computer"], "id": cid, "label": "fake", "host": "test"}
+            )
             assert (await ws.receive_json())["type"] == "welcome"
+
             async def handle(req):
                 if seen is not None:
                     seen.append(req["op"])
@@ -61,7 +68,12 @@ async def fake_computer(tokens, stop: asyncio.Event, cid=7, behaviour=None, seen
                         await ws.close()
                         return
                     if "error" in req["code"]:
-                        r = {"ok": False, "error": {"kind": "runtime", "message": "exec:1: boom"}, "stderr": [], "output": ""}
+                        r = {
+                            "ok": False,
+                            "error": {"kind": "runtime", "message": "exec:1: boom"},
+                            "stderr": [],
+                            "output": "",
+                        }
                     else:
                         r = {"ok": True, "returns": [json.dumps(req["code"])], "output": "echo"}
                     await ws.send_json({"type": "result", "req": req["req"], **r})
@@ -76,8 +88,13 @@ async def fake_computer(tokens, stop: asyncio.Event, cid=7, behaviour=None, seen
 async def main():
     home = tempfile.mkdtemp(prefix="ccmcp_test_")
     env = {**os.environ, "CC_MCP_HOME": home}
-    relay = subprocess.Popen([sys.executable, "-m", "computercraft_mcp.relay", "--port", str(PORT)], env=env,
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    relay = subprocess.Popen(
+        [sys.executable, "-m", "computercraft_mcp.relay", "--port", str(PORT)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
     try:
         await asyncio.sleep(1.5)
         tokens = json.loads((Path(home) / "tokens.json").read_text())
@@ -91,7 +108,11 @@ async def main():
             async with s.ws_connect(f"ws://127.0.0.1:{PORT}/ws") as ws:
                 await ws.send_json({"type": "hello", "token": tokens["api"], "id": 1})
                 m = await ws.receive()
-                check("API token rejected as computer token", ws.close_code == 4401 or m.type != aiohttp.WSMsgType.TEXT, str(m))
+                check(
+                    "API token rejected as computer token",
+                    ws.close_code == 4401 or m.type != aiohttp.WSMsgType.TEXT,
+                    str(m),
+                )
 
         code, res = await asyncio.to_thread(http, "/api/call", {"op": "ping"}, api)
         check("no computer -> 409", code == 409, f"{code} {res}")
@@ -107,8 +128,11 @@ async def main():
         check("exec round trip", res.get("ok") and res["returns"] == ['"1+1"'], str(res))
 
         code, res = await asyncio.to_thread(http, "/api/call", {"op": "exec", "code": "error()"}, api)
-        check("error passes through intact", res.get("ok") is False and res["error"]["kind"] == "runtime"
-              and "boom" in res["error"]["message"], str(res))
+        check(
+            "error passes through intact",
+            res.get("ok") is False and res["error"]["kind"] == "runtime" and "boom" in res["error"]["message"],
+            str(res),
+        )
 
         code, res = await asyncio.to_thread(http, "/api/call", {"op": "exec", "code": "x" * 150_000}, api)
         check("oversized request refused", res.get("error", {}).get("kind") == "too_large", str(res)[:200])
