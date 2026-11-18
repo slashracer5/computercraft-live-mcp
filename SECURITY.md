@@ -15,6 +15,8 @@ This tool lets an AI assistant run arbitrary Lua on an in-game ComputerCraft com
 - `cc_push` / `cc_pull` are disabled until you set `CC_MCP_FILES_ROOT`; point it only at folders you are happy for the assistant to read and overwrite. The command-line `ccctl push` / `pull` / `write --file` are not limited by it: they read and write the local paths you type, like any other command you run.
 - The relay log never contains tokens; DEBUG logs contain snippets of the code you run, so treat DEBUG log files like the code itself.
 
+The [wire protocol](docs/PROTOCOL.md) lists the authentication boundaries: `/api/call` and `/api/computers` require the API bearer token; `/ws` authenticates the computer in its hello. `/healthz` (including the connected count) and `/bridge.lua` are public. Error kinds and encoding flags are data, not proof of which layer produced a reply.
+
 ## Reporting a problem
 
 Open a GitHub issue for anything that is not exploitable. For a vulnerability, use GitHub's private "Report a vulnerability" option on the repository's Security tab.

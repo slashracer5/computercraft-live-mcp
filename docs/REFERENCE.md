@@ -1,6 +1,6 @@
 # Technical reference
 
-> **How to turn it on and connect: see [QUICKSTART.md](QUICKSTART.md).** This file is the technical reference.
+> **How to turn it on and connect: see [QUICKSTART.md](QUICKSTART.md).** This file covers tool usage. Message schemas, HTTP statuses and the complete error catalogue are in [PROTOCOL.md](PROTOCOL.md).
 
 Lets an AI assistant run code and read files on an in-game ComputerCraft computer, and see every error,
 including from programs a player started by hand.
@@ -29,6 +29,7 @@ MCP client --MCP (computercraft-mcp) / ccctl--> relay <--outbound websocket-- br
 | `tests/test_fs_tools.py` | file-system tools: snippet builders, refusals before sending, refusal-to-error mapping, formatters, MCP annotations, same text from ccctl |
 | `tests/test_ccctl.py` | every MCP tool has a `ccctl` subcommand (and a row below), same request and text as the tool, exit status, `--json`, chunked `write`, `update-bridge` |
 | `tests/test_labels.py` | computer labels: relay target resolution, `ambiguous` / `no_target` messages, ping label refresh, every tool's `computer` accepts a label, ccctl `--computer` |
+| `tests/test_protocol_docs.py` | the error-kind table in [PROTOCOL.md](PROTOCOL.md) matches `formatting.ERROR_KINDS`, and every kind the code returns is in it |
 | `tests/selftest_cc.py` | end-to-end in headless CraftOS-PC incl. MCP client, reboot, relay restart; run by `tests/test_e2e_craftos.py` (marker `e2e`) or on its own; `CRAFTOS_PC` overrides the emulator path |
 | `.github/workflows/ci.yml` | CI: ruff check / format check, pytest on Python 3.10–3.14 × Linux, Windows, macOS |
 
@@ -184,19 +185,19 @@ the recent terminal text (red lines marked `!`) and the `printError` entries wit
 Only one bridge can run per computer (a second `bridge` refuses to start).
 Create a file named `.bridge-debug` on the computer to get a connection trace in `.bridge-debug.log`.
 
-## What comes back (every op)
+## Result fields (when applicable)
 
 | field | meaning |
 |---|---|
 | `ok` | false if the operation failed |
-| `error.kind` | `syntax`, `runtime`, `exit`, `timeout`, `terminated`, `cancelled`, `busy`, `bad_request`, `internal` (relay adds `relay_timeout`, `disconnected`, `no_target`, `not_connected`, `ambiguous`, `too_large`; the client adds `relay_unreachable`, `local_file`, for `cc_push` `no_space`, `read_only`, `is_directory`, `replace_failed`, and for the file-system tools `not_found`, `exists`, `not_empty`, `read_only`) |
+| `error.kind` | `syntax`, `runtime`, `exit`, `timeout`, `terminated`, `cancelled`, `busy`, `bad_request`, `internal` (relay adds `relay_timeout`, `disconnected`, `too_large`, `unauthorized`, `no_target`, `not_connected`, `ambiguous`; the client adds `relay_unreachable`, `local_file`, for `cc_push` `no_space`, `read_only`, `is_directory`, `replace_failed`, and for the file-system tools `not_found`, `exists`, `not_empty`, `read_only`). Origins, HTTP statuses and meanings: [error kinds](PROTOCOL.md#error-kinds) |
 | `error.message` / `error.traceback` | Lua error text (`exec:3: boom`) and traceback |
 | `stderr` | every `printError(...)` line from the request: how shell reports "No such program" and uncaught program errors |
-| `output` | everything the code drew to the terminal (tail kept past 60 000 chars; `truncated` set) |
+| `output` | everything the code drew to the terminal (tail kept past 60 000 bytes before encoding; further size reduction may keep a prefix; `truncated` set) |
 | `returns` | return values, Lua-serialised |
 | `encoding` | `utf8`, or `bytes` when the data was not valid UTF-8 (binary files, CC border glyphs) |
 
-Ops: `exec` (persistent session env, `reset` clears), `shell`, `read` (`offset`; `next_offset`, `eof`), `write`
+Ops: `exec` (persistent session env, `reset` clears), `shell`, `read` (`offset`, `limit`; `next_offset`, `eof`), `write`
 (`append`), `list`, `peripherals`, `log`, `ping`, `cancel`.
 
 ## Text output
@@ -228,7 +229,7 @@ listings, paths, matched lines and drive names from the file-system tools, perip
 `computers`), `cc_call`/`cc_batch` values and errors, the JSON of unknown operations, and every error
 message and traceback. Error messages are wrapped even when the relay or the client wrote them: the
 formatter cannot tell those apart from a computer reply that claims the same kind. The kind itself is a
-server line (`  error: runtime`) only when it is in `formatting.KNOWN_KINDS`; any other kind goes inside
+server line (`  error: runtime`) only when it is in `formatting.ERROR_KINDS`; any other kind goes inside
 the error block. Status, hints, paging instructions, counts, sizes and durations stay outside the blocks.
 `ccctl` prints the same text, markers included; `ccctl --json` prints the raw result without markers.
 
@@ -324,13 +325,13 @@ and the result says when paths or matches were left out.
 - Requests run through the shell that launched the bridge, so `cd` in the hosted shell does not affect `cc_shell`.
 - Programs that draw straight to `term.native()` bypass the log. Output is the capture terminal's text,
   100 columns wide; interactive programs (`read()`) time out.
-- Text is exact UTF-8 for characters up to U+FFFF; emoji become `?` going in (CC mis-decodes surrogate pairs).
+- Request text supports UTF-8 for characters up to U+FFFF; emoji become `?` going in (CC mis-decodes surrogate pairs). Byte-encoded results have known lossy normalisation (#1 remains open); see [encodings](PROTOCOL.md#sizes-and-encodings).
 - CC:Tweaked's `http.websocket_message` defaults to 131,072 bytes (128 KiB), in both directions.
   The bridge caps encoded results at 120,000 bytes; the relay caps encoded requests at 100,000 bytes.
   The relay accepts websocket results up to 262,144 bytes so it is not the bottleneck: exceeding aiohttp's
   receive limit closes the whole connection.
 - `read` returns at most 60,000 bytes (~60 KB) per call, fewer when result encoding needs more space:
-  page with `next_offset`. Captured output keeps a tail of at most 60,000 characters before result encoding.
+  page with `next_offset`. Captured output keeps a tail of at most 60,000 bytes before result encoding.
 - `cc_push` starts with 60,000 characters per chunk and halves until the JSON-escaped chunk fits 75,000
   bytes (halving stops at 500 characters or fewer), leaving 20,000 bytes for the path and the other request fields.
   Very long paths can still exceed the request limit. For `cc_write`, the ~100 KB limit
