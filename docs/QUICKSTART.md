@@ -46,7 +46,7 @@ edit startup          <- type one line:  shell.run("bridge")   then save and exi
 
 The token only works for computer #3, so a copy of it on another computer is refused. A running relay picks up new tokens by itself.
 
-The computer's shell keeps working normally while the bridge runs. Type `exit` to stop it. Each computer connects separately (tools take an optional `computer` id).
+The computer's shell keeps working normally while the bridge runs. Type `exit` to stop it. Each computer connects separately (tools take an optional `computer` id or label).
 
 **Set up before per-computer tokens?** Computers that still use the old shared token keep working for now, but the relay log warns about it. Run `--setup --computer <id>` for each one, type `exit` on that computer, then the new `bridge ws://... <token>` line.
 
@@ -80,7 +80,7 @@ The order of steps 1 and 2 doesn't matter; the bridge retries every few seconds.
 | Tools say `relay_unreachable` | The relay isn't running. |
 | `the bridge is already running on this computer` | Normal: only one bridge per computer. Type `exit` first if you want to restart it. |
 | `cc_push` / `cc_pull` refuse | Set `CC_MCP_FILES_ROOT` to an allowed local folder. |
-| A `name.part` file next to a pushed file | A push was cut off before it could clean up; the old file is intact. The next push to that path overwrites it, or delete it. |
+| A `name.part` file next to a pushed file | A push was cut off before it could clean up. Usually the old file is intact; if the push said `the old remote file was deleted`, the `.part` file holds the only copy of the upload. The next push to that path overwrites it. |
 | Requests time out while the game is paused | Setters and main-thread peripheral calls only progress while the game is ticking: keep Minecraft focused. |
 | Computer says `bridge.lua` not found after moving to another world | Computers are per world. Do the computer setup again in that world. |
 | The tools don't show up | Approve the server in your client and restart it. |
@@ -111,4 +111,4 @@ ccctl exec "os.reboot()"      (it reports "disconnected": expected; startup.lua 
 
 ## Tests (optional)
 
-`pip install -e ".[dev]"`, then `pytest`: unit tests, relay tests with a fake computer, and a full run in headless CraftOS-PC (no Minecraft needed; skipped, with the reason shown, when the emulator is not found: set `CRAFTOS_PC` to its executable if it is installed somewhere unusual). `pytest -m "not e2e"` leaves the CraftOS-PC run out. Protocol details and limits: [REFERENCE.md](REFERENCE.md).
+`pip install -e ".[dev]"`, then `pytest`: unit tests, relay tests with a fake computer, and a full run in headless CraftOS-PC (no Minecraft needed; skipped, with the reason shown, when the emulator is not found: set `CRAFTOS_PC` to its executable if it is installed somewhere unusual). `pytest -m "not e2e"` leaves the CraftOS-PC run out. Tool usage and limits: [REFERENCE.md](REFERENCE.md). Wire messages, authentication, encodings and all error kinds: [PROTOCOL.md](PROTOCOL.md).

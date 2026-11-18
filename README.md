@@ -58,7 +58,7 @@ computercraft-live-mcp-relay                                            # run th
 2. On the in-game computer, type the commands `--setup` printed (`wget .../bridge.lua bridge.lua`, then `bridge ws://127.0.0.1:8765/ws <token>`).
 3. Register the MCP server with your client. For Claude Code, copy [`examples/mcp.json.example`](examples/mcp.json.example) to `.mcp.json` and set `CC_MCP_FILES_ROOT`.
 
-Full walkthrough, troubleshooting and the protocol reference: [docs/QUICKSTART.md](docs/QUICKSTART.md), [docs/REFERENCE.md](docs/REFERENCE.md).
+Full walkthrough: [docs/QUICKSTART.md](docs/QUICKSTART.md). Tool usage and limits: [docs/REFERENCE.md](docs/REFERENCE.md). Wire protocol and complete error kinds: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## Configuration
 

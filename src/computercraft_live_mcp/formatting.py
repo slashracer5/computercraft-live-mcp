@@ -41,16 +41,42 @@ HINTS = {
     "check its contents with cc_list first.",
 }
 
-# Error kinds printed as a server line ("  error: runtime"); any other kind goes inside the error block, so a
-# reply cannot invent one. Add new kinds here. Messages are always wrapped: the formatter only sees a dict, and a
-# computer's reply can claim a relay or client kind as easily as its own.
-KNOWN_KINDS = frozenset(
-    "syntax runtime exit timeout terminated cancelled internal busy disconnected bad_request".split()  # bridge
-    + "relay_timeout too_large unauthorized no_target not_connected ambiguous".split()  # relay
-    + "relay_unreachable local_file".split()  # client
-    + "no_space read_only is_directory replace_failed".split()  # cc_push checks
-    + "not_found exists not_empty".split()  # file-system tools
-)
+# Every error kind a result can carry, with the layer that produces it: docs/PROTOCOL.md has the same table and
+# tests/test_protocol_docs.py checks both against the code. Add new kinds here. Known kinds are printed as a server
+# line ("  error: runtime"); any other kind goes inside the error block, so a reply cannot invent one. Messages are
+# always wrapped: the formatter only sees a dict, and a computer's reply can claim a relay or client kind as easily
+# as its own.
+ERROR_KINDS = {
+    # bridge.lua (the relay also uses bad_request; the client bad_request, internal and runtime)
+    "syntax": "bridge",
+    "runtime": "bridge",
+    "exit": "bridge",
+    "timeout": "bridge",
+    "terminated": "bridge",
+    "cancelled": "bridge",
+    "internal": "bridge",
+    "busy": "bridge",
+    "bad_request": "bridge",
+    # relay.py (the bridge's own `disconnected` result is never delivered: its connection is gone)
+    "relay_timeout": "relay",
+    "disconnected": "relay",
+    "too_large": "relay",
+    "unauthorized": "relay",
+    "no_target": "relay",
+    "not_connected": "relay",
+    "ambiguous": "relay",
+    # bridge_client.py / ccctl.py, including the push checks and the file-system tools' refusals
+    "relay_unreachable": "client",
+    "local_file": "client",
+    "no_space": "client",
+    "read_only": "client",
+    "is_directory": "client",
+    "replace_failed": "client",
+    "not_found": "client",
+    "exists": "client",
+    "not_empty": "client",
+}
+KNOWN_KINDS = frozenset(ERROR_KINDS)
 
 
 def hint_for(res: dict) -> str | None:
