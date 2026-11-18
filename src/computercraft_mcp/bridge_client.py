@@ -1,4 +1,5 @@
-"""Shared client code for the CC bridge relay: HTTP calls, the network/call/batch requests and file transfer.
+"""Shared client code for the CC bridge relay: HTTP calls, the network/call/batch requests, the file-system tools
+(find/grep/stat/delete/move/copy/mkdir) and file transfer.
 
 Used by ccctl.py (command line) and mcp_server.py (MCP tools), so both send the same requests.
 Env: CC_MCP_URL (default http://127.0.0.1:8765), CC_MCP_API_TOKEN,
@@ -78,6 +79,155 @@ def _valid_call(c) -> bool:
         and bool(c["peripheral"] and c["method"])
         and isinstance(c.get("args") or [], list)
     )
+
+
+# ---------------------------------------------------------------------------------- file-system tools
+# cc_find / cc_grep / cc_stat / cc_delete / cc_move / cc_copy / cc_mkdir: one cc_lua snippet each. The results are
+# plain dicts (format with format_result("find"|"grep"|"stat"|"delete"|"move"|"copy"|"mkdir", res)); a refusal from
+# the computer becomes ok=False with an error kind (not_found, exists, not_empty, read_only, bad_request, runtime).
+MAX_RESULTS = 1000  # upper bound for max_results / max_matches
+
+FS_FIELDS = {  # what each result keeps from the snippet's JSON (anything else it sent is dropped)
+    "find": ("total", "limit", "entries", "cut"),
+    "grep": ("matches", "files", "binary", "unreadable", "limit", "stopped", "rom_skipped", "cut"),
+    "stat": ("exists", "isDir", "isReadOnly", "size", "entries", "drive", "capacity", "free", "created", "modified"),
+    "delete": ("path", "isDir", "size", "files", "dirs", "bytes"),
+    "move": ("from", "to", "isDir", "size"),
+    "copy": ("from", "to", "isDir", "size"),
+    "mkdir": ("path", "existed"),
+}
+
+
+def fs_find(pattern: str, max_results: int = 200, computer: int | None = None, timeout: float = 30) -> dict:
+    """Paths matching a fs.find glob (`*` within one path segment), sorted, at most max_results of them."""
+    if not isinstance(pattern, str) or not pattern.strip():
+        return _bad_request("find needs a pattern, e.g. *.lua or programs/*")
+    code = cc_lua.find_code(pattern, _clamp(max_results))
+    return _fs_request("find", code, computer, timeout, lambda doc: _fs_failure(doc, "find", pattern))
+
+
+def fs_grep(
+    pattern: str,
+    path: str = "",
+    plain: bool = True,
+    max_matches: int = 200,
+    include_rom: bool = False,
+    computer: int | None = None,
+    timeout: float = 30,
+) -> dict:
+    """Matching lines (path, line number, text) in the files under `path`. The search stops by itself shortly before
+    `timeout`, so a big tree returns what it found instead of timing out."""
+    if not isinstance(pattern, str) or not pattern:
+        return _bad_request("grep needs a non-empty pattern")
+    budget = max(0.25, timeout - min(5.0, timeout * 0.25))
+    code = cc_lua.grep_code(pattern, path, plain, _clamp(max_matches), include_rom, int(budget * 1000))
+    return _fs_request("grep", code, computer, timeout, lambda doc: _fs_failure(doc, "search", path))
+
+
+def fs_stat(path: str, computer: int | None = None, timeout: float = 30) -> dict:
+    """Whether `path` exists and, if so, what it is (see cc_lua.stat_code)."""
+    return _fs_request("stat", cc_lua.stat_code(path), computer, timeout, lambda doc: _fs_failure(doc, "stat", path))
+
+
+def fs_delete(path: str, recursive: bool = False, computer: int | None = None, timeout: float = 30) -> dict:
+    """Delete a file or directory; a non-empty directory only with recursive=True. Never the root."""
+    if _outside(path):
+        return _bad_request(f"refusing to delete {path!r}: that is the root directory (or above it)")
+    code = cc_lua.delete_code(path, recursive)
+    return _fs_request("delete", code, computer, timeout, lambda doc: _fs_failure(doc, "delete", path))
+
+
+def fs_move(src: str, dst: str, computer: int | None = None, timeout: float = 30) -> dict:
+    """Move/rename `src` to the full path `dst`, which must not exist yet."""
+    return _fs_transfer("move", src, dst, computer, timeout)
+
+
+def fs_copy(src: str, dst: str, computer: int | None = None, timeout: float = 30) -> dict:
+    """Copy `src` (recursively) to the full path `dst`, which must not exist yet."""
+    return _fs_transfer("copy", src, dst, computer, timeout)
+
+
+def fs_mkdir(path: str, computer: int | None = None, timeout: float = 30) -> dict:
+    """Create a directory and any missing parents; an existing directory is success (existed=True)."""
+    if _outside(path):
+        return _bad_request(f"refusing to create {path!r}: that is the root directory (or above it)")
+    return _fs_request("mkdir", cc_lua.mkdir_code(path), computer, timeout, lambda doc: _fs_failure(doc, "mkdir", path))
+
+
+def _fs_transfer(op: str, src: str, dst: str, computer: int | None, timeout: float) -> dict:
+    for p in (src, dst):
+        if _outside(p):
+            return _bad_request(f"refusing to {op} {p!r}: that is the root directory (or above it)")
+    code = cc_lua.transfer_code(src, dst, op == "move")
+    return _fs_request(op, code, computer, timeout, lambda doc: _fs_failure(doc, op, src, dst))
+
+
+def _outside(path: str) -> bool:
+    """True when `path` names the computer's root directory or something above it, as CC's fs.combine resolves it
+    ("", "/", "./", "a/..", "../x"). The snippets check again on the computer."""
+    parts: list[str] = []
+    for part in str(path).replace("\\", "/").split("/"):
+        if part in ("", "."):
+            continue
+        if part == ".." and parts and parts[-1] != "..":
+            parts.pop()
+        else:
+            parts.append(part)
+    return not parts or parts[0] == ".."
+
+
+def _clamp(limit) -> int:
+    try:
+        return max(1, min(int(limit), MAX_RESULTS))
+    except (TypeError, ValueError):
+        return 200
+
+
+def _bad_request(message: str) -> dict:
+    return {"ok": False, "error": {"kind": "bad_request", "message": message}}
+
+
+def _fs_request(op: str, code: str, computer: int | None, timeout: float, failure) -> dict:
+    """Run one fs snippet; keep FS_FIELDS[op] of its answer, or turn its refusal into an error via failure(doc)."""
+    res = call("exec", computer, timeout, code=code)
+    if not res.get("ok"):
+        return res  # relay/bridge failure or a Lua error: the reply carries the error, output and traceback
+    out = {"ok": True}
+    if "duration" in res:
+        out["duration"] = res["duration"]
+    doc = cc_lua.parse_text_json(res)
+    if doc is None:
+        return {**out, "ok": False, "error": {"kind": "internal", "message": f"{op}: the computer returned no result"}}
+    if doc.get("ok") is not True:
+        kind, message = failure(doc)
+        return {**out, "ok": False, "error": {"kind": kind, "message": message}}
+    out.update((key, doc[key]) for key in FS_FIELDS[op] if key in doc)
+    return out
+
+
+def _fs_failure(doc: dict, verb: str, path: str, dst: str | None = None) -> tuple[str, str]:
+    """(error kind, message) for a snippet's {ok=false, reason=...}."""
+    reason = doc.get("reason")
+    if reason == "not_found":
+        return "not_found", f"{path!r} does not exist"
+    if reason == "exists":
+        if dst is None:
+            return "exists", f"{path!r} already exists and is not a directory"
+        return "exists", f"{dst!r} already exists ({verb} never overwrites)"
+    if reason == "read_only":
+        named = dst if dst is not None and doc.get("which") == "dst" else path
+        return "read_only", f"{named!r} is read-only"
+    if reason == "not_empty":
+        entries = doc.get("entries")
+        count = f"{entries} item(s)" if isinstance(entries, int) and not isinstance(entries, bool) else "items"
+        return "not_empty", f"{path!r} is a directory with {count} in it; deleting it needs recursive=True"
+    if reason == "root":
+        return "bad_request", f"refusing to {verb}: that path is the root directory (or above it)"
+    if reason == "bad_pattern":
+        return "bad_request", f"invalid Lua pattern: {doc.get('message')}"
+    if reason == "failed":
+        return "runtime", f"{verb} failed: {doc.get('message')}"
+    return "internal", f"{verb}: unexpected answer from the computer"
 
 
 # ---------------------------------------------------------------------------------- file transfer

@@ -31,8 +31,11 @@ Tools for a real ComputerCraft computer inside a Minecraft world (through a rela
 - One request runs at a time per computer. Use cc_cancel to stop a stuck one.
 - cc_log shows what happened on the terminal, including errors from programs that were NOT started
   through these tools; poll it with since_error to see only new errors.
-- Be careful with cc_write/cc_push/cc_exec/cc_shell/cc_call/cc_batch: they change a live computer
-  (and its turtles/peripherals). Read first, ask before the first setter, restore state afterwards.
+- Be careful with cc_write/cc_push/cc_delete/cc_move/cc_exec/cc_shell/cc_call/cc_batch: they change a live
+  computer (and its turtles/peripherals). Read first, ask before the first setter, restore state afterwards.
+- Explore files with cc_find (paths), cc_grep (contents) and cc_stat (details), which are read-only. Manage them
+  with cc_mkdir/cc_copy/cc_move/cc_delete rather than cc_shell or cc_exec: they never overwrite an existing
+  path, but cc_delete has no undo.
 
 Working with peripherals:
 - Start with cc_network (all peripherals, grouped by type, with their methods).
@@ -51,6 +54,9 @@ server = MCPServer("computercraft", instructions=INSTRUCTIONS)
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
 CHANGES = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
+# cc_delete removes data; cc_move removes the old path. cc_copy and cc_mkdir only add (CC never overwrites).
+DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True)
+ADDS_IDEMPOTENT = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 
 
 async def _call(op: str, computer: int | None, timeout: float, **args) -> str:
@@ -194,6 +200,75 @@ async def cc_pull(remote_path: str, local_path: str, computer: int | None = None
     Only the folders listed in CC_MCP_FILES_ROOT are allowed."""
     res = await asyncio.to_thread(bc.pull_file, remote_path, local_path, computer, 30)
     return format_result("pull", res)
+
+
+# ---------------------------------------------------------------------------------- file-system tools
+@server.tool(annotations=READ_ONLY)
+async def cc_find(pattern: str, max_results: int = 200, computer: int | None = None) -> str:
+    """Find files and directories by path pattern (CC's fs.find): `*` matches any characters within one path
+    segment, e.g. `*.lua`, `programs/*`, `*/*.log`; there is no recursive `**`. Lists each match with its byte size
+    (`d path/` for directories), sorted, at most max_results (up to 1000). Read-only."""
+    res = await asyncio.to_thread(bc.fs_find, pattern, max_results, computer, 30)
+    return format_result("find", res)
+
+
+@server.tool(annotations=READ_ONLY)
+async def cc_grep(
+    pattern: str,
+    path: str = "",
+    plain: bool = True,
+    max_matches: int = 200,
+    include_rom: bool = False,
+    timeout: float = 30,
+    computer: int | None = None,
+) -> str:
+    """Search file contents and return `path:line: text` for each matching line.
+
+    `path` is a directory (searched recursively; "" = the whole computer) or one file. plain=True matches the text
+    literally and case-sensitively; plain=False makes `pattern` a Lua pattern (`^local`, `%d+`). rom/ is skipped
+    unless include_rom=True or `path` is inside it; binary files are skipped and long lines are shortened around
+    the match. Stops at max_matches (up to 1000) or shortly before `timeout`, and says so. Read-only."""
+    res = await asyncio.to_thread(bc.fs_grep, pattern, path, plain, max_matches, include_rom, computer, timeout)
+    return format_result("grep", res)
+
+
+@server.tool(annotations=READ_ONLY)
+async def cc_stat(path: str, computer: int | None = None) -> str:
+    """Describe one path: whether it exists, file (size) or directory (entry count), read-only, its drive with
+    capacity and free space, and created/modified times where CC reports them. Read-only."""
+    res = await asyncio.to_thread(bc.fs_stat, path, computer, 30)
+    return format_result("stat", res)
+
+
+@server.tool(annotations=DESTRUCTIVE)
+async def cc_delete(path: str, recursive: bool = False, computer: int | None = None) -> str:
+    """Delete a file or directory on the computer. There is no undo or trash. A non-empty directory is refused unless
+    recursive=True, which deletes everything inside it. The root directory and read-only paths (rom/) are refused."""
+    res = await asyncio.to_thread(bc.fs_delete, path, recursive, computer, 30)
+    return format_result("delete", res)
+
+
+@server.tool(annotations=DESTRUCTIVE)
+async def cc_move(src: str, dst: str, computer: int | None = None) -> str:
+    """Move or rename a file or directory. `dst` is the new full path (not a folder to move into) and must not exist:
+    CC never overwrites. Missing parent folders of `dst` are created. Programs that use the old path will break."""
+    res = await asyncio.to_thread(bc.fs_move, src, dst, computer, 30)
+    return format_result("move", res)
+
+
+@server.tool(annotations=CHANGES)
+async def cc_copy(src: str, dst: str, computer: int | None = None) -> str:
+    """Copy a file or directory (recursively). `dst` is the new full path and must not exist: CC never overwrites.
+    Missing parent folders of `dst` are created; copying out of rom/ works."""
+    res = await asyncio.to_thread(bc.fs_copy, src, dst, computer, 30)
+    return format_result("copy", res)
+
+
+@server.tool(annotations=ADDS_IDEMPOTENT)
+async def cc_mkdir(path: str, computer: int | None = None) -> str:
+    """Create a directory, including missing parents. An existing directory is fine (the result says so)."""
+    res = await asyncio.to_thread(bc.fs_mkdir, path, computer, 30)
+    return format_result("mkdir", res)
 
 
 def main() -> None:

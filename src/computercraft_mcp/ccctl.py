@@ -19,6 +19,14 @@
                                                      cc_batch (CALLS: a JSON list as for cc_batch; or stdin)
   ccctl push  local.lua remote.lua [--append]        cc_push
   ccctl pull  remote.log local.log                   cc_pull
+  ccctl find  "programs/*" [--max N]                 cc_find (fs.find glob: * stays within one path segment)
+  ccctl grep  PATTERN [PATH] [--lua] [--max N] [--include-rom]
+                                                     cc_grep (plain text unless --lua; PATH "" = everything)
+  ccctl stat  PATH                                   cc_stat
+  ccctl rm    PATH [--recursive]                     cc_delete (a non-empty directory needs --recursive)
+  ccctl mv    SRC DST                                cc_move (DST is the new full path; never overwrites)
+  ccctl cp    SRC DST                                cc_copy (never overwrites)
+  ccctl mkdir PATH                                   cc_mkdir (parents included)
   ccctl update-bridge                                upload the packaged bridge.lua (then restart the bridge)
 
 Shared flags (before or after the subcommand): --json  --computer ID  --timeout SECONDS
@@ -91,6 +99,24 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("pull", parents=[common])
     s.add_argument("remote")
     s.add_argument("local")
+    s = sub.add_parser("find", parents=[common])
+    s.add_argument("pattern")
+    s.add_argument("--max", type=int, default=200, dest="max_results", help="most paths to list (up to 1000)")
+    s = sub.add_parser("grep", parents=[common])
+    s.add_argument("pattern")
+    s.add_argument("path", nargs="?", default="", help="directory (recursive) or file; default: everything")
+    s.add_argument("--lua", action="store_true", help="PATTERN is a Lua pattern (default: plain text)")
+    s.add_argument("--max", type=int, default=200, dest="max_matches", help="stop after N matches (up to 1000)")
+    s.add_argument("--include-rom", action="store_true", help="also search rom/")
+    for name in ("stat", "mkdir"):
+        sub.add_parser(name, parents=[common]).add_argument("path")
+    s = sub.add_parser("rm", parents=[common])
+    s.add_argument("path")
+    s.add_argument("-r", "--recursive", action="store_true", help="delete a non-empty directory with its contents")
+    for name in ("mv", "cp"):
+        s = sub.add_parser(name, parents=[common])
+        s.add_argument("src")
+        s.add_argument("dst", help="the new full path (must not exist)")
     sub.add_parser("update-bridge", parents=[common])
     return p
 
@@ -166,6 +192,21 @@ def run(a, computer: int | None, timeout: float) -> tuple[str, dict, dict]:
         return "pull", bc.pull_file(a.remote, a.local, computer, timeout, check_roots=False), {}
     if cmd == "update-bridge":
         return "push", bc.push_file(str(bc.BRIDGE_LUA), "bridge.lua", computer, timeout, check_roots=False), {}
+    if cmd == "find":
+        return "find", bc.fs_find(a.pattern, a.max_results, computer, timeout), {}
+    if cmd == "grep":
+        res = bc.fs_grep(a.pattern, a.path, not a.lua, a.max_matches, a.include_rom, computer, timeout)
+        return "grep", res, {}
+    if cmd == "stat":
+        return "stat", bc.fs_stat(a.path, computer, timeout), {}
+    if cmd == "rm":
+        return "delete", bc.fs_delete(a.path, a.recursive, computer, timeout), {}
+    if cmd == "mv":
+        return "move", bc.fs_move(a.src, a.dst, computer, timeout), {}
+    if cmd == "cp":
+        return "copy", bc.fs_copy(a.src, a.dst, computer, timeout), {}
+    if cmd == "mkdir":
+        return "mkdir", bc.fs_mkdir(a.path, computer, timeout), {}
     raise AssertionError(cmd)
 
 

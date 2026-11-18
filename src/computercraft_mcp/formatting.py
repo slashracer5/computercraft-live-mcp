@@ -3,6 +3,7 @@
 import json
 import re
 import secrets
+from datetime import datetime, timezone
 
 from .cc_lua import parse_returned_json
 
@@ -28,6 +29,12 @@ HINTS = {
     "is_directory": "That path is a directory: give the full file path, e.g. folder/name.lua.",
     "replace_failed": "The upload arrived but swapping it into place failed; the `sent N of M chars` line says what "
     "is on the computer now. Check with cc_list before retrying.",
+    "not_found": "Nothing exists at that path (paths start at the computer's root). cc_list or cc_find show what is "
+    "there.",
+    "exists": "The destination already exists and CC never overwrites it: choose another path, or delete the existing "
+    "one first if that is really intended.",
+    "not_empty": "cc_delete removes a non-empty directory only with recursive=True, which deletes everything inside: "
+    "check its contents with cc_list first.",
 }
 
 # Error kinds printed as a server line ("  error: runtime"); any other kind goes inside the error block, so a
@@ -38,6 +45,7 @@ KNOWN_KINDS = frozenset(
     + "relay_timeout too_large unauthorized no_target not_connected".split()  # relay
     + "relay_unreachable local_file".split()  # client
     + "no_space read_only is_directory replace_failed".split()  # cc_push checks
+    + "not_found exists not_empty".split()  # file-system tools
 )
 
 
@@ -146,16 +154,21 @@ def _write(res: dict) -> list[str]:
     return lines + _output(res)
 
 
-def _list(res: dict) -> list[str]:
-    entries = _records(res.get("entries"))
+def _entry_lines(entries: list[dict], key: str) -> list[str]:
+    """`d name/` for directories, right-aligned byte size then name for files (cc_list, cc_find)."""
     width = max((len(_number(entry.get("size"))) for entry in entries if not entry.get("isDir")), default=1)
     lines = []
     for entry in entries:
-        name = _text(entry.get("name", "?"))
+        name = _text(entry.get(key, "?"))
         if entry.get("isDir"):
             lines.append(f"d {name}/")
         else:
             lines.append(f"  {_number(entry.get('size')):>{width}} {name}")
+    return lines
+
+
+def _list(res: dict) -> list[str]:
+    lines = _entry_lines(_records(res.get("entries")), "name")
     return ([_untrusted("\n".join(lines), "listing")] if lines else []) + _output(res)
 
 
@@ -315,6 +328,135 @@ def _pull(res: dict) -> list[str]:
     return [f"saved {_number(res.get('bytes'))} bytes to {res.get('path')}"]
 
 
+# ---------------------------------------------------------------------------------- file-system tools
+# Results built by bridge_client.fs_*: every field came from the computer, so only booleans, numbers and fixed
+# words reach server lines; paths, drive names and matched lines go inside markers.
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _count(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _flag(value) -> str:
+    return str(value).lower() if isinstance(value, bool) else "?"
+
+
+def _timestamp(value) -> str | None:
+    """CC's fs.attributes times (milliseconds since the epoch) as UTC; None when missing or nonsense."""
+    if not _is_number(value) or value <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(value / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _find(res: dict) -> list[str]:
+    if not res.get("ok", True):
+        return _output(res)
+    entries = _records(res.get("entries"))
+    total = _count(res.get("total"))
+    line = f"{len(entries)} matching path(s)"
+    if total is not None and total > len(entries):
+        why = "not all fit in one reply" if res.get("cut") is True else f"max_results={_number(res.get('limit'))}"
+        line = f"{len(entries)} of {total} matching paths shown ({why}): narrow the pattern to see the rest"
+    lines = [line]
+    if entries:
+        lines.append(_untrusted("\n".join(_entry_lines(entries, "path")), "paths"))
+    return lines + _output(res)
+
+
+def _grep(res: dict) -> list[str]:
+    if not res.get("ok", True):
+        return _output(res)
+    matches = _records(res.get("matches"))
+    notes = [f"{len(matches)} match(es) in {_number(res.get('files'))} file(s)"]
+    if res.get("rom_skipped") is True:
+        notes.append("rom/ skipped (include_rom=True searches it)")
+    for key, what in (("binary", "binary file(s) skipped"), ("unreadable", "unreadable path(s) skipped")):
+        if _count(res.get(key)):
+            notes.append(f"{res[key]} {what}")
+    if res.get("stopped") == "limit":
+        notes.append(f"stopped at max_matches={_number(res.get('limit'))}: there may be more")
+    elif res.get("stopped") == "time":
+        notes.append("stopped early to answer within the timeout: raise timeout or search a narrower path")
+    if res.get("cut") is True:
+        notes.append("not all matches fit in one reply: narrow the search")
+    lines = ["; ".join(notes)]
+    if matches:
+        found = (f"{_text(m.get('path', '?'))}:{_number(m.get('line'))}: {_text(m.get('text', ''))}" for m in matches)
+        lines.append(_untrusted("\n".join(found), "matches"))
+    return lines + _output(res)
+
+
+def _stat(res: dict) -> list[str]:
+    if not res.get("ok", True):
+        return _output(res)
+    lines = ["exists: " + _flag(res.get("exists"))]
+    if res.get("exists") is not True:
+        return lines + _output(res)
+    if res.get("isDir") is True:
+        entries = _count(res.get("entries"))
+        lines.append("type: directory" + (f", {entries} item(s)" if entries is not None else ""))
+    else:
+        lines.append(f"type: file, {_number(res.get('size'))} bytes" if res.get("isDir") is False else "type: ?")
+    lines.append("read-only: " + _flag(res.get("isReadOnly")))
+    if res.get("drive") is not None:
+        lines.append("drive: " + _untrusted(_text(res["drive"]), "drive", inline=True))
+    if _is_number(res.get("capacity")):
+        lines.append(f"capacity: {_number(res['capacity'])} bytes")
+    free = res.get("free")
+    if free == "unlimited" or _is_number(free):
+        lines.append(f"free: {_number(free)} bytes" if _is_number(free) else "free: unlimited")
+    for key in ("created", "modified"):
+        when = _timestamp(res.get(key))
+        if when:
+            lines.append(f"{key}: {when}")
+    return lines + _output(res)
+
+
+FS_COUNTS = (("files", "file(s)"), ("dirs", "subdirectory(s)"), ("bytes", "bytes"))  # what a recursive delete removed
+
+
+def _what(res: dict) -> str:
+    if res.get("isDir") is True:
+        if any(key in res for key, _ in FS_COUNTS):
+            return "directory (" + ", ".join(f"{_number(res.get(key))} {what}" for key, what in FS_COUNTS) + ")"
+        return "directory"
+    return f"file ({_number(res.get('size'))} bytes)" if res.get("isDir") is False else "?"
+
+
+def _delete(res: dict) -> list[str]:
+    if not res.get("ok", True):
+        return _output(res)
+    return [f"deleted {_what(res)}: " + _untrusted(_text(res.get("path", "?")), "path", inline=True)] + _output(res)
+
+
+def _transfer(res: dict, verb: str) -> list[str]:
+    if not res.get("ok", True):
+        return _output(res)
+    paths = f"{_text(res.get('from', '?'))} -> {_text(res.get('to', '?'))}"
+    return [f"{verb} {_what(res)}: " + _untrusted(paths, "path", inline=True)] + _output(res)
+
+
+def _move(res: dict) -> list[str]:
+    return _transfer(res, "moved")
+
+
+def _copy(res: dict) -> list[str]:
+    return _transfer(res, "copied")
+
+
+def _mkdir(res: dict) -> list[str]:
+    if not res.get("ok", True):
+        return _output(res)
+    existed = res.get("existed")
+    what = "directory already exists" if existed is True else "created directory" if existed is False else "?"
+    return [f"{what}: " + _untrusted(_text(res.get("path", "?")), "path", inline=True)] + _output(res)
+
+
 def _generic(res: dict) -> list[str]:
     data = {key: value for key, value in res.items() if key not in {"ok", "error", "stderr", "duration"}}
     return [_untrusted(json.dumps(data, indent=2, ensure_ascii=False), "result")] if data else []
@@ -335,6 +477,13 @@ FORMATTERS = {
     "calls": _calls,
     "push": _push,
     "pull": _pull,
+    "find": _find,
+    "grep": _grep,
+    "stat": _stat,
+    "delete": _delete,
+    "move": _move,
+    "copy": _copy,
+    "mkdir": _mkdir,
 }
 
 
