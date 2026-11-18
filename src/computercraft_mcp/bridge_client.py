@@ -1,4 +1,4 @@
-"""Shared client code for the CC bridge relay: HTTP calls and result formatting.
+"""Shared client code for the CC bridge relay: HTTP calls and file transfer.
 
 Used by ccctl.py (command line) and mcp_server.py (MCP tools).
 Env: CC_MCP_URL (default http://127.0.0.1:8765), CC_MCP_API_TOKEN,
@@ -44,69 +44,6 @@ def call(op: str, computer: int | None = None, timeout: float = 30, **args) -> d
     if computer is not None:
         body["computer"] = computer
     return request("/api/call", body)
-
-
-HINTS = {
-    "relay_unreachable": "The relay is not running. Start it with `computercraft-mcp-relay` (leave it running), "
-    "then retry. The in-game computer reconnects by itself within seconds.",
-    "no_target": "Several computers are connected: repeat the call with computer=<id> (cc_computers lists them).",
-    "not_connected": "That computer is offline (world closed, chunk unloaded, or bridge stopped). "
-    "cc_computers shows who is connected.",
-    "disconnected": "The computer dropped mid-request (chunk unload, reboot or world exit). "
-    "Check cc_computers, then retry.",
-    "busy": "A previous request is still running on that computer. Call cc_cancel, then retry. If this keeps happening "
-    "the game is probably paused or unfocused: yielding peripheral calls only progress while the game is ticking.",
-    "relay_timeout": "The computer did not answer even its own timeout timer, which almost always means Minecraft "
-    "is paused/unfocused or the computer's chunk is not loaded. A cancel was queued for it. Focus the game and retry; "
-    "use cc_ping to see if it answers at all.",
-    "timeout": "The request ran past its timeout and was abandoned on the computer. Raise `timeout`, split the work, "
-    "or (for peripheral setters) make sure the game is focused and unpaused.",
-}
-
-
-def hint_for(res: dict) -> str | None:
-    e = res.get("error")
-    return HINTS.get(e.get("kind")) if isinstance(e, dict) else None
-
-
-def format_result(res: dict) -> str:
-    """Human/LLM-readable text for one result. Errors come first and are explicit."""
-    out = []
-    ok = res.get("ok", True)
-    out.append("OK" if ok else "ERROR")
-    e = res.get("error")
-    if e:
-        out.append(f"  {e.get('kind')}: {e.get('message')}")
-        if e.get("traceback"):
-            out.append("  " + e["traceback"].strip().replace("\n", "\n  "))
-    hint = hint_for(res)
-    if hint:
-        out.append("  hint: " + hint)
-    if res.get("returns"):
-        out.append("returns: " + ", ".join(res["returns"]))
-    if res.get("stderr"):
-        out.append("stderr:")
-        out.extend("  " + line for line in res["stderr"])
-    if res.get("output"):
-        out.append("output:" + (" (truncated, tail kept)" if res.get("truncated") else ""))
-        out.append(res["output"])
-    if "lines" in res or "errors" in res:
-        red = set(res.get("red") or [])
-        if res.get("lines"):
-            out.append("terminal (! = red text):")
-            out.extend(("! " if i in red else "  ") + line for i, line in enumerate(res["lines"], 1))
-        if res.get("errors"):
-            out.append("printError log:")
-            out.extend(f"  #{x['id']} [{x['when']}] {x['text']}" for x in res["errors"])
-        out.append(f"last_error_id: {res.get('last_error_id', 0)}")
-    for key in ("data", "entries", "peripherals", "computers"):
-        if key in res:
-            out.append(res[key] if isinstance(res[key], str) else json.dumps(res[key], indent=2))
-    if res.get("data") is not None and res.get("next_offset") is not None and not res.get("eof", True):
-        out.append(f"[more data: call again with offset={res['next_offset']}]")
-    if "duration" in res:
-        out.append(f"[{res['duration']:.2f}s]")
-    return "\n".join(out)
 
 
 # ---------------------------------------------------------------------------------- file transfer

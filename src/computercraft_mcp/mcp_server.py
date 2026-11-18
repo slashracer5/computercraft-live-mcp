@@ -9,13 +9,13 @@ Configuration is by environment:
 """
 
 import asyncio
-import json
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from . import bridge_client as bc
 from . import cc_lua
+from .formatting import format_result
 
 INSTRUCTIONS = """\
 Tools for a real ComputerCraft computer inside a Minecraft world (through a relay).
@@ -54,26 +54,21 @@ CHANGES = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHi
 
 async def _call(op: str, computer: int | None, timeout: float, **args) -> str:
     res = await asyncio.to_thread(bc.call, op, computer, timeout, **args)
-    return bc.format_result(res)
+    return format_result(op, res)
 
 
 @server.tool(annotations=READ_ONLY)
 async def cc_computers() -> str:
-    """List the in-game computers currently connected to the relay (id, label, game version)."""
+    """List connected computers: id, label, host version and connected time."""
     res = await asyncio.to_thread(bc.request, "/api/computers")
-    if res.get("error"):
-        return bc.format_result(res)
-    return json.dumps(res["computers"], indent=2) if res["computers"] else "No computers connected."
+    return format_result("computers", res)
 
 
 @server.tool(annotations=READ_ONLY)
 async def cc_ping(computer: int | None = None) -> str:
     """Check that a computer answers; returns its id, label, uptime (clock), game day and free disk space."""
     res = await asyncio.to_thread(bc.call, "ping", computer, 10)
-    if not res.get("ok"):
-        return bc.format_result(res)
-    keys = ("id", "label", "clock", "day", "host", "free")
-    return "OK " + ", ".join(f"{k}={res.get(k)}" for k in keys)
+    return format_result("ping", res)
 
 
 @server.tool(annotations=CHANGES)
@@ -112,13 +107,13 @@ async def cc_write(path: str, content: str, append: bool = False, computer: int 
 
 @server.tool(annotations=READ_ONLY)
 async def cc_list(path: str = "", computer: int | None = None) -> str:
-    """List a directory on the computer (names, whether each is a directory, sizes)."""
+    """List a directory: `d name/` for directories, byte size then name for files."""
     return await _call("list", computer, 30, path=path)
 
 
 @server.tool(annotations=READ_ONLY)
 async def cc_peripherals(methods: bool = False, computer: int | None = None) -> str:
-    """List attached peripherals (name and type); methods=True also lists each one's method names."""
+    """List attached peripherals grouped by type; methods=True lists each group's methods once."""
     return await _call("peripherals", computer, 30, methods=methods or None)
 
 
@@ -148,17 +143,24 @@ async def cc_network(methods: bool = False, computer: int | None = None) -> str:
 
     Names in the output are exactly what to pass to cc_call / cc_batch / peripheral.call. Read-only."""
     res = await asyncio.to_thread(bc.call, "exec", computer, 60, code=cc_lua.network_code(methods))
-    doc = cc_lua.parse_returned_json(res) if res.get("ok") else None
-    return cc_lua.format_network(doc) if doc else bc.format_result(res)
+    return format_result("network", res)
 
 
 async def _run_calls(calls: list[dict], parallel: bool, timeout: float, computer: int | None) -> str:
     for c in calls:
         if not isinstance(c, dict) or not c.get("peripheral") or not c.get("method"):
-            return 'ERROR\n  bad_request: each call needs {"peripheral": name, "method": name, "args": [...]}'
+            return format_result(
+                "calls",
+                {
+                    "ok": False,
+                    "error": {
+                        "kind": "bad_request",
+                        "message": 'each call needs {"peripheral": name, "method": name, "args": [...]}',
+                    },
+                },
+            )
     res = await asyncio.to_thread(bc.call, "exec", computer, timeout, code=cc_lua.calls_code(calls, parallel))
-    doc = cc_lua.parse_returned_json(res) if res.get("ok") else None
-    return cc_lua.format_calls(doc, calls) if doc else bc.format_result(res)
+    return format_result("calls", res, calls=calls)
 
 
 @server.tool(annotations=CHANGES)
@@ -190,12 +192,7 @@ async def cc_push(local_path: str, remote_path: str, append: bool = False, compu
     allowed.
     Use this to deploy programs instead of pasting their source through cc_write."""
     res = await asyncio.to_thread(bc.push_file, local_path, remote_path, computer, 30, append)
-    text = bc.format_result(res)
-    if res.get("ok"):
-        text += (
-            f"\nuploaded {res.get('chars')} chars in {res.get('chunks')} chunk(s); remote size {res.get('size')} bytes"
-        )
-    return text
+    return format_result("push", res)
 
 
 @server.tool(annotations=CHANGES)
@@ -203,10 +200,7 @@ async def cc_pull(remote_path: str, local_path: str, computer: int | None = None
     """Download a computer file (text/CSV/log; large files are paged automatically) into a local folder.
     Overwrites the local file. Only the folders listed in CC_MCP_FILES_ROOT are allowed."""
     res = await asyncio.to_thread(bc.pull_file, remote_path, local_path, computer, 30)
-    text = bc.format_result(res)
-    if res.get("ok"):
-        text += f"\nsaved {res.get('bytes')} bytes to {res.get('path')}"
-    return text
+    return format_result("pull", res)
 
 
 def main() -> None:

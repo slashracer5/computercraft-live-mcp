@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from computercraft_mcp import cc_lua
+from computercraft_mcp import cc_lua, formatting
 
 
 @pytest.mark.parametrize(
@@ -69,6 +69,11 @@ def test_network_code_fills_placeholders(methods):
     assert "return textutils.serialiseJSON(out)" in code
 
 
+def exec_reply(doc):
+    """An exec reply whose Lua snippet returned `doc` as JSON (what cc_network / cc_call / cc_batch get back)."""
+    return {"ok": True, "returns": [json.dumps(json.dumps(doc))]}
+
+
 def test_format_calls():
     calls = [
         {"peripheral": "left", "method": "set", "args": [42]},
@@ -80,7 +85,7 @@ def test_format_calls():
         "elapsed_ms": 12,
         "results": [{"ok": True, "values": [42, "yes"]}, {"ok": False, "error": "boom"}, {"ok": True}],
     }
-    text = cc_lua.format_calls(doc, calls)
+    text = formatting.format_result("calls", exec_reply(doc), calls=calls)
     assert "3 call(s)" in text
     assert "12 ms" in text
     assert 'left.set(42) -> 42, "yes"' in text
@@ -98,13 +103,13 @@ def test_format_network_groups_devices():
             {"name": "dev_b", "types": ["widget"], "methods": ["get", "set"]},
         ],
     }
-    text = cc_lua.format_network(doc)
+    text = formatting.format_result("network", exec_reply(doc))
     assert "2 peripherals" in text
-    assert "on_ship=True" in text
+    assert "on_ship=true" in text
     assert "ship_mass=123" in text
     assert "computer_7" in text
     assert "type widget  x2" in text
     assert "dev_a, dev_b" in text
     assert text.count("methods:") == 1
     assert "get, set" in text
-    assert "0 peripherals" in cc_lua.format_network({})
+    assert "0 peripherals" in formatting.format_result("network", exec_reply({"devices": []}))

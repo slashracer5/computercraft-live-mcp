@@ -14,7 +14,7 @@
 
 Shared flags (before or after the subcommand): --json  --computer ID  --timeout SECONDS
 Env: CC_MCP_URL, CC_MCP_API_TOKEN, CC_MCP_HOME (see bridge_client.py).
-Exit status is 1 when the call failed or the remote operation reported an error.
+Exit status is 1 on failure, except `computers`, which always exits 0.
 """
 
 import argparse
@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 from . import bridge_client as bc
+from .formatting import format_result
 
 
 def main() -> int:
@@ -63,9 +64,8 @@ def main() -> int:
     timeout = getattr(a, "timeout", 30.0)
 
     if a.cmd == "computers":
-        print(json.dumps(bc.request("/api/computers"), indent=2))
-        return 0
-    if a.cmd in ("ping", "cancel"):
+        res = bc.request("/api/computers")
+    elif a.cmd in ("ping", "cancel"):
         res = bc.call(a.cmd, computer, timeout)
     elif a.cmd == "exec":
         res = bc.call("exec", computer, timeout, code=a.code, reset=a.reset or None)
@@ -85,7 +85,10 @@ def main() -> int:
         res = bc.call(
             "log", computer, timeout, lines=a.lines, errors_only=a.errors_only or None, since_error=a.since_error
         )
-    print(json.dumps(res, indent=2) if as_json else bc.format_result(res))
+    op = {"ls": "list", "periph": "peripherals"}.get(a.cmd, a.cmd)
+    print(json.dumps(res, indent=2) if as_json else format_result(op, res))
+    if a.cmd == "computers":
+        return 0
     return 0 if res.get("ok", False) else 1
 
 
