@@ -197,6 +197,19 @@ async def mcp_checks():
 
         t = await text("cc_ping", {})
         check("MCP cc_ping", t.startswith('OK\n<untrusted source="ping"') and plain(t).startswith("OK\nid=0"), t)
+        exec_('os.setComputerLabel("selftest-reactor")')
+        try:
+            t = await text("cc_ping", {})
+            check("MCP ping refreshes label", t.startswith("OK") and "selftest-reactor" in plain(t), t)
+            t = await text("cc_ping", {"computer": "SELFTEST-Reactor"})
+            check("MCP ping by label", plain(t).startswith("OK\nid=0"), t)
+            t = await text("cc_ping", {"computer": "selftest-unknown"})
+            check("MCP unknown label", "  error: not_connected" in t, t)
+            rc, t = ccctl("ping", "--computer", "selftest-reactor")
+            check("ccctl ping by label", rc == 0 and plain(t).startswith("OK\nid=0"), f"rc={rc} {t}")
+        finally:
+            exec_("os.setComputerLabel(nil)")
+            await text("cc_ping", {})
         t = await text("cc_computers", {})
         check(
             "MCP cc_computers",

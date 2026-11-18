@@ -122,7 +122,6 @@ async def test_disconnect_mid_call_and_gone_computer(relay_client, computer):
 @pytest.mark.parametrize(
     "body",
     [
-        pytest.param({"op": "ping", "computer": "abc"}, id="invalid-computer"),
         pytest.param([], id="array-body"),
         pytest.param({"op": "exec", "code": "1", "timeout": "abc"}, id="invalid-timeout"),
     ],

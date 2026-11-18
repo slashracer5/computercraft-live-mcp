@@ -25,6 +25,9 @@ The in-game computer connects *out* to a small relay on your machine, so nothing
 
 Errors come back as data: an `ERROR` line, `error.kind`, message, traceback, hints for known causes and any `printError` output.
 
+With several computers connected, pass `computer=<id or label>` (`cc_ping(computer="reactor")`, `ccctl ping --computer reactor`);
+see [REFERENCE.md](docs/REFERENCE.md#choosing-a-computer) for the matching rules.
+
 Computer data (file contents, output, log lines, labels, peripheral names, error messages) comes back inside `<untrusted source="..." id="...">` ... `</untrusted id="...">` blocks with a random id, so it cannot pose as the server's own lines. `ccctl` has a subcommand for every tool and prints the same text; add `--json` for the raw result.
 
 ## Quick start

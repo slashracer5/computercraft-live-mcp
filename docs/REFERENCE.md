@@ -28,6 +28,7 @@ MCP client --MCP (computercraft-mcp) / ccctl--> relay <--outbound websocket-- br
 | `tests/test_atomic_transfer.py` | `cc_push` / `cc_pull` atomicity against a fake computer (failed chunks, preflight refusals, local replace) |
 | `tests/test_fs_tools.py` | file-system tools: snippet builders, refusals before sending, refusal-to-error mapping, formatters, MCP annotations, same text from ccctl |
 | `tests/test_ccctl.py` | every MCP tool has a `ccctl` subcommand (and a row below), same request and text as the tool, exit status, `--json`, chunked `write`, `update-bridge` |
+| `tests/test_labels.py` | computer labels: relay target resolution, `ambiguous` / `no_target` messages, ping label refresh, every tool's `computer` accepts a label, ccctl `--computer` |
 | `tests/selftest_cc.py` | end-to-end in headless CraftOS-PC incl. MCP client, reboot, relay restart; run by `tests/test_e2e_craftos.py` (marker `e2e`) or on its own; `CRAFTOS_PC` overrides the emulator path |
 | `.github/workflows/ci.yml` | CI: ruff check / format check, pytest on Python 3.10–3.14 × Linux, Windows, macOS |
 
@@ -49,10 +50,19 @@ For restarts put `shell.run("bridge")` in `startup.lua` (the url/token are saved
 Update the bridge from the PC: `ccctl update-bridge` (uploads the `bridge.lua` shipped with the installed package to
 `bridge.lua` on the computer, atomically), then `ccctl exec "os.reboot()"` (it reports `disconnected`: expected).
 
+## Choosing a computer
+
+Tools accept `computer=<id or label>`; labels match exactly ignoring case (no trimming or prefixes).
+A digit string like `"3"` falls back to a valid id only if no label matches (label wins; `"03"` stays a label).
+Duplicates give `ambiguous` (409); missing ids or labels give `not_connected` (404). Use `cc_computers` to list both.
+Omit `computer` with one connected; otherwise `no_target` (409) reports none or lists `#id (label)` pairs.
+Labels refresh on connect and by `cc_ping`; after changing one, ping by id first.
+ccctl `--computer 3` means id 3; relay `--setup` / `--rotate` still require numeric ids.
+
 ## Command line (`ccctl`)
 
 `ccctl` sends the same requests as the MCP tools and prints the same text (markers included); `--json` prints the
-raw result instead. Shared flags, before or after the subcommand: `--json`, `--computer ID`, `--timeout SECONDS`
+raw result instead. Shared flags, before or after the subcommand: `--json`, `--computer ID_OR_LABEL`, `--timeout SECONDS`
 (per request; default 30, `network` 60). Exit status is 1 when the relay or the operation fails, including
 `computers` (relay down, wrong token) and `call` / `batch` when any call fails; otherwise 0.
 
@@ -179,7 +189,7 @@ Create a file named `.bridge-debug` on the computer to get a connection trace in
 | field | meaning |
 |---|---|
 | `ok` | false if the operation failed |
-| `error.kind` | `syntax`, `runtime`, `exit`, `timeout`, `terminated`, `cancelled`, `busy`, `bad_request`, `internal` (relay adds `relay_timeout`, `disconnected`, `not_connected`, `too_large`; the client adds `relay_unreachable`, `local_file`, for `cc_push` `no_space`, `read_only`, `is_directory`, `replace_failed`, and for the file-system tools `not_found`, `exists`, `not_empty`, `read_only`) |
+| `error.kind` | `syntax`, `runtime`, `exit`, `timeout`, `terminated`, `cancelled`, `busy`, `bad_request`, `internal` (relay adds `relay_timeout`, `disconnected`, `no_target`, `not_connected`, `ambiguous`, `too_large`; the client adds `relay_unreachable`, `local_file`, for `cc_push` `no_space`, `read_only`, `is_directory`, `replace_failed`, and for the file-system tools `not_found`, `exists`, `not_empty`, `read_only`) |
 | `error.message` / `error.traceback` | Lua error text (`exec:3: boom`) and traceback |
 | `stderr` | every `printError(...)` line from the request: how shell reports "No such program" and uncaught program errors |
 | `output` | everything the code drew to the terminal (tail kept past 60 000 chars; `truncated` set) |

@@ -29,7 +29,7 @@
   ccctl mkdir PATH                                   cc_mkdir (parents included)
   ccctl update-bridge                                upload the packaged bridge.lua (then restart the bridge)
 
-Shared flags (before or after the subcommand): --json  --computer ID  --timeout SECONDS
+Shared flags (before or after the subcommand): --json  --computer ID_OR_LABEL  --timeout SECONDS
 Env: CC_MCP_URL, CC_MCP_API_TOKEN, CC_MCP_HOME (shared through bridge_client; see config.py).
 write, push and update-bridge upload in chunks like cc_push: any size, and an overwrite is atomic.
 Local paths are used as typed: CC_MCP_FILES_ROOT only limits the MCP tools.
@@ -38,6 +38,7 @@ Exit status is 1 when the relay or the operation fails (call/batch: when any cal
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -52,10 +53,19 @@ RESTART_NOTE = (
 )
 
 
+def computer_arg(text: str) -> int | str:
+    if not text:
+        raise argparse.ArgumentTypeError("computer must be an id or a label")
+    # Canonical ids mirror relay.COMPUTER_KEY.
+    return int(text) if re.fullmatch(r"0|[1-9][0-9]{0,9}", text) else text
+
+
 def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="print the raw result")
-    common.add_argument("--computer", type=int, default=argparse.SUPPRESS, help="computer id (several connected)")
+    common.add_argument(
+        "--computer", type=computer_arg, default=argparse.SUPPRESS, help="computer id or label (several connected)"
+    )
     common.add_argument("--timeout", type=float, default=argparse.SUPPRESS, help="seconds per request")
     p = argparse.ArgumentParser(
         prog="ccctl", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter, parents=[common]
@@ -151,7 +161,7 @@ def _load_calls(a) -> tuple[object, dict | None]:
         return None, {"ok": False, "error": {"kind": "bad_request", "message": f"calls are not valid JSON: {e}"}}
 
 
-def run(a, computer: int | None, timeout: float) -> tuple[str, dict, dict]:
+def run(a, computer: int | str | None, timeout: float) -> tuple[str, dict, dict]:
     """Do one subcommand; returns (formatter op, raw result, formatter context)."""
     cmd = a.cmd
     if cmd == "computers":
