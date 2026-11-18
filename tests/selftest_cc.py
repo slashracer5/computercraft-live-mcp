@@ -118,6 +118,20 @@ TYPE = (
     'os.queueEvent("key", keys.enter, false) end '
 )
 
+FAKE_PERIPHERALS = (
+    "_G.__realp = {} for k, v in pairs(peripheral) do __realp[k] = v end "
+    "local dev = {dev_a = {}, dev_b = {}} "
+    "local m = {getX = function() sleep(0.3) return 5, 'five' end, "
+    "           setY = function(a, b) return a + b end, "
+    "           boom = function() error('bad value: expected left_handed') end} "
+    "peripheral.getNames = function() return {'dev_b', 'dev_a'} end "
+    "peripheral.getType = function() return 'widget' end "
+    "peripheral.getMethods = function() return {'setY', 'getX', 'boom'} end "
+    "peripheral.call = function(n, meth, ...) return m[meth](...) end "
+    "return 'faked'"
+)
+RESTORE_PERIPHERALS = "for k, v in pairs(__realp) do peripheral[k] = v end return 'restored'"
+
 
 async def mcp_checks():
     os.environ["CC_MCP_FILES_ROOT"] = str(TMP)
@@ -196,19 +210,7 @@ async def mcp_checks():
         check("MCP usable after timeout", "still alive" in t, t)
 
         # ---- higher-level tools, driven against fake peripherals installed from Lua ------------------
-        fake = (
-            "_G.__realp = {} for k, v in pairs(peripheral) do __realp[k] = v end "
-            "local dev = {dev_a = {}, dev_b = {}} "
-            "local m = {getX = function() sleep(0.3) return 5, 'five' end, "
-            "           setY = function(a, b) return a + b end, "
-            "           boom = function() error('bad value: expected left_handed') end} "
-            "peripheral.getNames = function() return {'dev_b', 'dev_a'} end "
-            "peripheral.getType = function() return 'widget' end "
-            "peripheral.getMethods = function() return {'setY', 'getX', 'boom'} end "
-            "peripheral.call = function(n, meth, ...) return m[meth](...) end "
-            "return 'faked'"
-        )
-        t = await text("cc_exec", {"code": fake})
+        t = await text("cc_exec", {"code": FAKE_PERIPHERALS})
         check("fake peripherals installed", "faked" in t, t)
         t = await text("cc_peripherals", {"methods": True})
         check("cc_peripherals groups by type", "type widget  x2" in t and "dev_a, dev_b" in t, t)
@@ -247,7 +249,7 @@ async def mcp_checks():
         )
         t = await text("cc_batch", {"calls": [{"peripheral": "dev_a"}]})
         check("cc_batch validates calls", "bad_request" in t, t)
-        t = await text("cc_exec", {"code": "for k, v in pairs(__realp) do peripheral[k] = v end return 'restored'"})
+        t = await text("cc_exec", {"code": RESTORE_PERIPHERALS})
         check("fake peripherals removed", "restored" in t, t)
 
         # ---- file transfer ----------------------------------------------------------------------------
@@ -344,6 +346,81 @@ def cut_push_checks():
     )
 
 
+def ccctl(*args, **env):
+    """Run ccctl in a subprocess from TMP, without CC_MCP_FILES_ROOT (the CLI uses the paths it is given)."""
+    e = {k: v for k, v in os.environ.items() if k != "CC_MCP_FILES_ROOT"}
+    e.update(env)
+    p = subprocess.run(
+        [sys.executable, "-m", "computercraft_mcp.ccctl", *args],
+        env=e,
+        cwd=TMP,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    return p.returncode, p.stdout + p.stderr
+
+
+def ccctl_checks():
+    """The command-line client against the real relay and bridge (#16)."""
+    rc, t = ccctl("ping")
+    check("ccctl ping", rc == 0 and plain(t).startswith("OK\nid=0"), f"rc={rc} {t}")
+    rc, t = ccctl("computers")
+    check("ccctl computers", rc == 0 and "connected_for_s=" in t, f"rc={rc} {t}")
+    rc, t = ccctl("computers", CC_MCP_API_TOKEN="wrong")
+    check("ccctl computers exits 1 on a wrong token", rc == 1 and "  error: unauthorized" in t, f"rc={rc} {t}")
+    rc, t = ccctl("computers", "--json", CC_MCP_URL="http://127.0.0.1:1")
+    check(
+        "ccctl computers --json exits 1 when the relay is down",
+        rc == 1 and json.loads(t)["error"]["kind"] == "relay_unreachable",
+        f"rc={rc} {t}",
+    )
+    rc, t = ccctl("exec", "error('cli boom')")
+    check("ccctl exec failure exits 1", rc == 1 and t.startswith("ERROR") and "cli boom" in t, f"rc={rc} {t}")
+
+    big = ("abcdefghij" * 16000) + "\n" + "héllo — ünïcode ✓\n" * 40  # 160 KB: the old single write failed
+    (TMP / "cli_big.txt").write_text(big, encoding="utf-8", newline="")
+    call("write", path="cli_big.txt", data="old")
+    rc, t = ccctl("write", "cli_big.txt", "--file", "cli_big.txt")
+    after = exec_("return fs.getSize('cli_big.txt'), fs.exists('cli_big.txt.part')")
+    check(
+        "ccctl write --file uploads a 160 KB file in chunks, atomically",
+        rc == 0 and "chunk(s); remote size" in t and after.get("returns") == [str(len(big.encode("utf-8"))), "false"],
+        f"rc={rc} {t} {after}",
+    )
+    rc, t = ccctl("pull", "cli_big.txt", "pulled/cli_big.txt")
+    check(
+        "ccctl pull to a relative path, byte-identical",
+        rc == 0 and (TMP / "pulled" / "cli_big.txt").read_bytes() == big.encode("utf-8"),
+        f"rc={rc} {t}",
+    )
+    rc, t = ccctl("push", "cli_big.txt", "rom/cli_big.txt")
+    check("ccctl push refusal exits 1", rc == 1 and "  error: read_only" in t, f"rc={rc} {t}")
+
+    rc, t = ccctl("network", "--json")
+    check("ccctl network --json", rc == 0 and json.loads(t).get("ok") is True, f"rc={rc} {t[:300]}")
+    exec_(FAKE_PERIPHERALS)
+    rc, t = ccctl("call", "dev_a", "setY", "2", "40")
+    check("ccctl call", rc == 0 and "dev_a.setY(2, 40) -> 42" in plain(t), f"rc={rc} {t}")
+    rc, t = ccctl("call", "dev_a", "boom")
+    check("ccctl call exits 1 when the call fails", rc == 1 and "expected left_handed" in t, f"rc={rc} {t}")
+    calls = [{"peripheral": "dev_a", "method": "getX"}, {"peripheral": "dev_b", "method": "setY", "args": [1, 1]}]
+    rc, t = ccctl("batch", json.dumps(calls), "--sequential")
+    check("ccctl batch", rc == 0 and '-> 5, "five"' in plain(t) and "-> 2" in plain(t), f"rc={rc} {t}")
+    exec_(RESTORE_PERIPHERALS)
+
+    call("write", path="bridge.lua", data="\n-- stale copy\n", append=True)  # still valid Lua if the update fails
+    rc, t = ccctl("update-bridge")
+    check("ccctl update-bridge", rc == 0 and "uploaded" in t and "os.reboot()" in t, f"rc={rc} {t}")
+    rc, t = ccctl("pull", "bridge.lua", "bridge_on_computer.lua")
+    check(
+        "the computer now has the packaged bridge.lua",
+        rc == 0 and (TMP / "bridge_on_computer.lua").read_bytes() == BRIDGE_LUA.read_bytes(),
+        f"rc={rc} {t}",
+    )
+
+
 def main():
     data = TMP / "data"
     comp = data / "computer" / "0"
@@ -410,6 +487,9 @@ def main():
 
     # ---- a push whose connection is cut halfway
     cut_push_checks()
+
+    # ---- ccctl as a subprocess; update-bridge here, so the reboot below runs the uploaded bridge.lua
+    ccctl_checks()
 
     # ---- duplicate-bridge guard
     r = call("shell", command="bridge")

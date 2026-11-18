@@ -23,7 +23,6 @@ CLI_CASES = [
     (["exec", "return 42"], "exec", {"ok": True, "returns": ["42"]}),
     (["shell", "ls"], "shell", {"ok": True, "output": "rom"}),
     (["read", "test.txt"], "read", {"ok": True, "data": "hello", "eof": True}),
-    (["write", "test.txt"], "write", {"ok": True, "size": 5}),
     (["ls"], "list", {"ok": True, "entries": [{"name": "rom", "isDir": True}]}),
     (["periph"], "peripherals", {"ok": True, "peripherals": [{"name": "left", "types": ["modem"]}]}),
     (["log"], "log", {"ok": True, "lines": ["hello"], "last_error_id": 0}),
@@ -55,7 +54,7 @@ def test_cli_formatting_and_exit_status(monkeypatch, argv, op, res, as_json, fai
     monkeypatch.setattr(bc, "request", request)
     status = ccctl.main()
     assert requested == [op]
-    assert status == (1 if failed and op != "computers" else 0)
+    assert status == (1 if failed else 0)
     deterministic_ids()
     expected = json.dumps(res, indent=2) if as_json else format_result(op, res)
     assert output.getvalue() == expected + "\n"
@@ -114,9 +113,9 @@ async def test_invalid_calls_use_formatter_without_relay(monkeypatch, calls):
     monkeypatch.setattr(bc, "call", no_call)
     formatted = []
 
-    def formatter(op, res):
+    def formatter(op, res, **context):
         formatted.append((op, res))
-        return format_result(op, res)
+        return format_result(op, res, **context)
 
     monkeypatch.setattr(mcp_server, "format_result", formatter)
     assert await mcp_server.cc_batch(calls) == (
