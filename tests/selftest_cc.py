@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """End-to-end test of bridge.lua + the relay inside headless CraftOS-PC (no Minecraft needed).
 
-Runs everything in a temp folder on port 18767 and never touches your own CraftOS-PC data.
+Runs everything in a temp folder on a free local port and never touches your own CraftOS-PC data.
   python tests/selftest_cc.py   (after `pip install -e .`)
+Set CRAFTOS_PC to override the platform's default emulator path. Missing emulators exit with status 77.
 CraftOS-PC is a stand-in for CC:Tweaked: it caught real bridge bugs (stale websocket events
 after a reboot), but the in-game test remains the final word.
 """
@@ -10,6 +11,7 @@ after a reboot), but the in-game test remains the final word.
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -17,8 +19,29 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).parent
-EMU = Path(os.environ.get("LOCALAPPDATA", "")) / "CraftOS-PC" / "CraftOS-PC_console.exe"
-PORT = 18767
+if "CRAFTOS_PC" in os.environ:
+    EMU = Path(os.environ["CRAFTOS_PC"]).expanduser()
+    SKIP_REASON = f"CRAFTOS_PC does not name an emulator file: {os.environ['CRAFTOS_PC']}"
+elif sys.platform == "win32":
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    EMU = Path(local_appdata) / "CraftOS-PC" / "CraftOS-PC_console.exe" if local_appdata else None
+    SKIP_REASON = f"CraftOS-PC console not found under %LOCALAPPDATA%: {EMU}; set CRAFTOS_PC"
+elif sys.platform == "darwin":
+    EMU = Path("/Applications/CraftOS-PC.app/Contents/MacOS/craftos")
+    SKIP_REASON = f"CraftOS-PC not found at {EMU}; set CRAFTOS_PC"
+else:
+    craftos = shutil.which("craftos")
+    EMU = Path(craftos) if craftos else None
+    SKIP_REASON = "CraftOS-PC executable 'craftos' not found on PATH; set CRAFTOS_PC"
+
+if EMU is None or not EMU.is_file():
+    print(f"SKIP: {SKIP_REASON}")
+    sys.exit(77)
+EMU = EMU.resolve()
+
+with socket.socket() as port_socket:
+    port_socket.bind(("127.0.0.1", 0))
+    PORT = port_socket.getsockname()[1]
 TMP = Path(tempfile.mkdtemp(prefix="ccmcp_cc_"))
 os.environ["CC_MCP_HOME"] = str(TMP / "home")
 os.environ["CC_MCP_URL"] = f"http://127.0.0.1:{PORT}"
@@ -52,6 +75,7 @@ def stop(name):
             p.wait(5)
         except subprocess.TimeoutExpired:
             p.kill()
+            p.wait()
 
 
 def computers():
@@ -208,9 +232,6 @@ async def mcp_checks():
 
 
 def main():
-    if not EMU.exists():
-        print(f"CraftOS-PC console not found at {EMU}; skipping")
-        return 0
     data = TMP / "data"
     comp = data / "computer" / "0"
     (data / "config").mkdir(parents=True)

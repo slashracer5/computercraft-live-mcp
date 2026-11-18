@@ -20,8 +20,9 @@ MCP client --MCP (computercraft-mcp) / ccctl--> relay <--outbound websocket-- br
 | `src/computercraft_mcp/ccctl.py` | command-line client |
 | `src/computercraft_mcp/mcp_server.py` | MCP tools: `cc_exec cc_shell cc_read cc_write cc_list cc_peripherals cc_log cc_cancel cc_ping cc_computers cc_network cc_call cc_batch cc_push cc_pull` |
 | `src/computercraft_mcp/cc_lua.py` | Lua snippet builders + formatters behind `cc_network` / `cc_call` / `cc_batch` (they run through `exec`, so `bridge.lua` is unchanged) |
-| `tests/selftest_relay.py` | relay checks with a fake computer |
-| `tests/selftest_cc.py` | end-to-end in headless CraftOS-PC incl. MCP client, reboot, relay restart |
+| `tests/test_*.py`, `tests/conftest.py` | pytest suite: helpers, the relay with a fake computer (in-process, free ports), file transfer; strict `xfail` tests document #1 and #5 |
+| `tests/selftest_cc.py` | end-to-end in headless CraftOS-PC incl. MCP client, reboot, relay restart; run by `tests/test_e2e_craftos.py` (marker `e2e`) or on its own; `CRAFTOS_PC` overrides the emulator path |
+| `.github/workflows/ci.yml` | CI: ruff check / format check, pytest on Python 3.10–3.14 × Linux, Windows, macOS |
 
 ## Run
 
