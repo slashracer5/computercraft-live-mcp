@@ -10,9 +10,13 @@ from .cc_lua import network_extras, parse_returned_json
 HINTS = {
     "relay_unreachable": "The relay is not running. Start it with `computercraft-live-mcp-relay` (leave it running), "
     "then retry. The in-game computer reconnects by itself within seconds.",
-    "no_target": "Several computers are connected: repeat the call with computer=<id> (cc_computers lists them).",
-    "not_connected": "That computer is offline (world closed, chunk unloaded, or bridge stopped). "
-    "cc_computers shows who is connected.",
+    "no_target": "With several computers connected, repeat the call with computer=<id or label> "
+    "(cc_computers lists them); with none, check that the world is open and the bridge is running.",
+    "ambiguous": "Several connected computers have that label: repeat the call with computer=<id> "
+    "(cc_computers lists ids and labels).",
+    "not_connected": "That computer is offline (world closed, chunk unloaded, or bridge stopped), "
+    "or no connected computer has that label; cc_computers lists ids and labels. "
+    "A label set after the computer connected needs cc_ping(computer=<id>) first.",
     "disconnected": "The computer dropped mid-request (chunk unload, reboot or world exit). "
     "Check cc_computers, then retry.",
     "busy": "A previous request is still running on that computer. Call cc_cancel, then retry. If this keeps happening "
@@ -42,7 +46,7 @@ HINTS = {
 # computer's reply can claim a relay or client kind as easily as its own.
 KNOWN_KINDS = frozenset(
     "syntax runtime exit timeout terminated cancelled internal busy disconnected bad_request".split()  # bridge
-    + "relay_timeout too_large unauthorized no_target not_connected".split()  # relay
+    + "relay_timeout too_large unauthorized no_target not_connected ambiguous".split()  # relay
     + "relay_unreachable local_file".split()  # client
     + "no_space read_only is_directory replace_failed".split()  # cc_push checks
     + "not_found exists not_empty".split()  # file-system tools

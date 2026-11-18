@@ -75,7 +75,8 @@ The order of steps 1 and 2 doesn't matter; the bridge retries every few seconds.
 | `wget`: Could not connect / Connection refused | The relay isn't running. |
 | Screen shows `connect failed ... (retrying)` | Same: relay not running (or wrong address/port). It keeps retrying by itself. |
 | Screen shows `handshake rejected (wrong token?)` | The relay log's `rejected hello` line says why: the token belongs to another computer id, was replaced (`--rotate`), or `tokens.json` was deleted. Run `computercraft-live-mcp-relay --setup --computer <id>` (`id` on the computer shows it), type `exit` on the computer, then the printed `bridge ws://... <token>` line. |
-| Tools say `no_target` / `not_connected` | No computer is connected. Check the relay says `computer #N connected`, that the world is open and the computer's chunk is loaded. |
+| Tools say `no_target` / `not_connected` | `no_target`: none or several connected (pass an id or label). `not_connected`: offline or no matching label; after changing a label in-game, ping by id first. |
+| Tools say `ambiguous` | Several computers share that label; use a numeric id from `cc_computers`. |
 | Tools say `relay_unreachable` | The relay isn't running. |
 | `the bridge is already running on this computer` | Normal: only one bridge per computer. Type `exit` first if you want to restart it. |
 | `cc_push` / `cc_pull` refuse | Set `CC_MCP_FILES_ROOT` to an allowed local folder. |
@@ -101,7 +102,7 @@ wget http://127.0.0.1:8765/bridge.lua bridge.lua     (answer yes if it asks to o
 reboot
 ```
 
-Or from the PC, while the old bridge is still connected (add `--computer ID` when several are):
+Or from the PC, while the old bridge is still connected (add `--computer ID_OR_LABEL` when several are):
 
 ```
 ccctl update-bridge
