@@ -13,7 +13,7 @@ class RelaySetupTest(unittest.TestCase):
     def run_setup(self, *args):
         stdout, stderr = io.StringIO(), io.StringIO()
         with (
-            patch.object(sys, "argv", ["computercraft-live-mcp-relay", "--setup", *args]),
+            patch.object(sys, "argv", ["computercraft-live-mcp-relay", "--setup", "--computer", "1", *args]),
             patch.object(relay, "load_tokens", return_value={"computer": "test-token"}),
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
@@ -31,7 +31,7 @@ class RelaySetupTest(unittest.TestCase):
                     output, warning = self.run_setup("--host", bind, "--port", "9876")
                 detect.assert_called_once_with(bind)
                 self.assertIn(f"wget http://{url_host}:9876/bridge.lua", output)
-                self.assertIn(f"bridge ws://{url_host}:9876/ws test-token", output)
+                self.assertIn(f"bridge ws://{url_host}:9876/ws ", output)
                 self.assertIn(f'[[http.rules]]\n        host = "{address}"\n        port = 9876', output)
                 self.assertIn("--advertise-host", warning)
 
@@ -50,7 +50,7 @@ class RelaySetupTest(unittest.TestCase):
     def test_missing_route_explains_how_to_supply_an_address(self):
         stderr = io.StringIO()
         with (
-            patch.object(sys, "argv", ["computercraft-live-mcp-relay", "--setup", "--host", "::"]),
+            patch.object(sys, "argv", ["computercraft-live-mcp-relay", "--setup", "--computer", "1", "--host", "::"]),
             patch.object(relay, "_default_route_address", side_effect=OSError),
             contextlib.redirect_stderr(stderr),
             self.assertRaises(SystemExit) as exit_error,

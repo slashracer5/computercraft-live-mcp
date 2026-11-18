@@ -94,6 +94,22 @@ def computers():
     return bc.request("/api/computers").get("computers", [])
 
 
+def hello_refused(cid, token):
+    """Try a hello as computer `cid` with `token`; True if the relay closes with 4401 instead of welcoming it."""
+    import asyncio
+
+    import aiohttp
+
+    async def attempt():
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(f"ws://127.0.0.1:{PORT}/ws") as ws:
+                await ws.send_json({"type": "hello", "id": cid, "token": token, "label": "intruder"})
+                msg = await ws.receive(timeout=5)
+                return msg.type != aiohttp.WSMsgType.TEXT and ws.close_code == 4401
+
+    return asyncio.run(attempt())
+
+
 def wait_for(cond, timeout, step=0.5):
     end = time.time() + timeout
     while time.time() < end:
@@ -689,9 +705,18 @@ def main():
     (comp / "startup.lua").write_text('shell.run("bridge")')
     (comp / "broken.lua").write_text('print("start") error("program blew up")')
 
+    # Issue computer #0 its own token, as a user would with `computercraft-live-mcp-relay --setup --computer 0`.
+    setup = subprocess.run(
+        [sys.executable, "-m", "computercraft_live_mcp.relay", "--setup", "--computer", "0", "--port", str(PORT)],
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+    )
+    tokens = json.loads((TMP / "home" / "tokens.json").read_text())
+    token = tokens["computers"]["0"]
+    check("--setup --computer 0 prints #0's own token", f"/ws {token}" in setup.stdout, setup.stdout + setup.stderr)
     start_relay()
     time.sleep(1.5)
-    token = json.loads((TMP / "home" / "tokens.json").read_text())["computer"]
     (comp / ".bridge.json").write_text(json.dumps({"url": f"ws://127.0.0.1:{PORT}/ws", "token": token}))
     procs["emu"] = subprocess.Popen(
         [str(EMU), "--headless", "-d", str(data), "--id", "0"],
@@ -701,6 +726,11 @@ def main():
     )
 
     check("boots via startup.lua and connects", wait_for(lambda: computers(), 30))
+    check("connected with its own token", computers()[0].get("auth") == "own_token", str(computers()))
+    check("#0's token cannot connect as #1", hello_refused(1, token))
+    check("the shared token cannot take over #0", hello_refused(0, tokens["computer"]))
+    first = computers()[0]
+    check("no takeover of #0", first["replacements"] == 0 and first["remote"] == "127.0.0.1", str(first))
 
     r = exec_("return 40 + 2")
     check("exec expression", r.get("ok") and r["returns"] == ["42"], str(r))

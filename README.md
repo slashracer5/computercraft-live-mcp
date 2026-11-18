@@ -40,9 +40,10 @@ Computer data (file contents, output, log lines, labels, peripheral names, error
 
 ```
 pip install git+https://github.com/slashracer5/computercraft-live-mcp      # or: uv tool install git+https://...
-computercraft-live-mcp-relay --setup                                    # starts nothing; prints the in-game commands with your token
+computercraft-live-mcp-relay --setup --computer 3                       # starts nothing; gives computer #3 its own token, prints the in-game commands
 computercraft-live-mcp-relay                                            # run the relay (leave it running)
 ```
+(`id` on the in-game computer shows its id. Each computer gets its own token, which only works for that id.)
 
 1. In CC:Tweaked's server config, allow the relay (rule goes **above** the default `$private` deny), then restart the world:
    ```toml
@@ -62,14 +63,14 @@ Full walkthrough, troubleshooting and the protocol reference: [docs/QUICKSTART.m
 |---|---|---|
 | `CC_MCP_URL` | `http://127.0.0.1:8765` | relay address used by the MCP server and `ccctl` |
 | `CC_MCP_HOME` | `~/.computercraft-live-mcp` | folder holding `tokens.json` (created on first run) |
-| `CC_MCP_API_TOKEN` / `CC_MCP_COMPUTER_TOKEN` | from `tokens.json` | override the tokens |
+| `CC_MCP_API_TOKEN` / `CC_MCP_COMPUTER_TOKEN` | from `tokens.json` | override the API token / the shared computer token (deprecated); never saved |
 | `CC_MCP_FILES_ROOT` | *(unset: push/pull refuse)* | local folder(s) `cc_push` / `cc_pull` may touch, separated by `;` on Windows and `:` elsewhere (`ccctl` uses the paths you type) |
 
 Message sizes and timeouts are defined in [src/computercraft_live_mcp/limits.py](src/computercraft_live_mcp/limits.py); see [Known limits](docs/REFERENCE.md#known-limits).
 
 ## Security
 
-This is a remote shell for a game computer. Keep the relay on loopback or a private network, never share `tokens.json`, and read [SECURITY.md](SECURITY.md) before running it anywhere other than your own machine. Anything the computer sends back is untrusted data, and tool results mark it as such.
+This is a remote shell for a game computer. Keep the relay on loopback or a private network, never share `tokens.json`, and read [SECURITY.md](SECURITY.md) before running it anywhere other than your own machine. Replace leaked tokens with `computercraft-live-mcp-relay --rotate api|computer|all`. Anything the computer sends back is untrusted data, and tool results mark it as such.
 
 ## Development
 

@@ -15,7 +15,7 @@ MCP client --MCP (computercraft-live-mcp) / ccctl--> relay <--outbound websocket
 | file | what |
 |---|---|
 | `src/computercraft_live_mcp/bridge.lua` | in-game client. Hosts the computer's shell, records the terminal, answers requests |
-| `src/computercraft_live_mcp/relay.py` | aiohttp relay: `/ws` (computer), `/api/call` (control), `/bridge.lua` (install), `/healthz` |
+| `src/computercraft_live_mcp/relay.py` | aiohttp relay: `/ws` (computer), `/api/call` (control), `/bridge.lua` (install), `/healthz`; `tokens.json` (`--setup`, `--rotate`) |
 | `src/computercraft_live_mcp/bridge_client.py` | shared by MCP tools and ccctl: HTTP calls, `network` / `run_calls` (with call validation), the `fs_*` file-system requests, chunked file transfer and root checks |
 | `src/computercraft_live_mcp/formatting.py` | per-operation formatters shared by MCP tools and ccctl; common header and computer-data emission helper |
 | `src/computercraft_live_mcp/config.py` | frozen environment configuration, cached on first use; `reset_config()` clears it |
@@ -35,12 +35,14 @@ MCP client --MCP (computercraft-live-mcp) / ccctl--> relay <--outbound websocket
 
 ```
 pip install git+https://github.com/slashracer5/computercraft-live-mcp
+computercraft-live-mcp-relay --setup --computer 3   # token for computer #3 + the in-game commands
 computercraft-live-mcp-relay --show-tokens          # tokens live in ~/.computercraft-live-mcp/tokens.json
+computercraft-live-mcp-relay --rotate computer --computer 3   # or: --rotate api|computer|all
 computercraft-live-mcp-relay --host 127.0.0.1 --port 8765
 ```
 Relay logging flags: `--log-level DEBUG|INFO|WARNING|ERROR` (case-insensitive, default `INFO`)
-and `--log-file PATH` (append UTF-8 logs to a file as well as stderr). `--setup` and
-`--show-tokens` still print their output to stdout.
+and `--log-file PATH` (append UTF-8 logs to a file as well as stderr). `--setup`, `--rotate` and
+`--show-tokens` print their output to stdout and exit; `--host`/`--port` set the address they print.
 
 In-game: `wget http://HOST:PORT/bridge.lua bridge.lua`, then `bridge ws://HOST:PORT/ws <computer-token>`.
 For restarts put `shell.run("bridge")` in `startup.lua` (the url/token are saved in `.bridge.json`).
@@ -87,6 +89,31 @@ raw result instead. Shared flags, before or after the subcommand: `--json`, `--c
 - `computers`, `call`, `batch`, `network` and the push/pull text come from the same `bridge_client` /
   `formatting` functions the MCP tools use, so a problem seen through MCP can be reproduced from a shell.
 
+## Tokens
+
+`tokens.json` (in `CC_MCP_HOME`):
+
+```
+{"api": "<API token>", "computer": "<shared computer token, deprecated>", "computers": {"3": "<token for #3>"}}
+```
+
+- The bridge's hello carries its token and `os.getComputerID()`. The relay accepts it only if the token is
+  that id's own token. The shared `computer` token is still accepted, with a deprecation warning, for ids
+  that have no entry in `computers`; once an id has its own token, the shared token is refused for it.
+  Ids must be integers from 0 to 2^31-1; anything else is refused.
+- `--setup --computer ID` issues (or reuses) the token for that id. `--rotate api` replaces the API token,
+  `--rotate computer` the shared token and every per-computer token (`--computer ID`: only that one),
+  `--rotate all` everything. Both print what to update (the in-game `bridge` line, `CC_MCP_API_TOKEN`).
+- A running relay checks whether `tokens.json` changed before each hello and API request. It then reloads
+  it and disconnects computers whose token is no longer valid; a file it cannot use is ignored with a
+  warning and the previous tokens stay in force.
+- `CC_MCP_API_TOKEN` and `CC_MCP_COMPUTER_TOKEN` override `api` and the shared `computer` token; overrides
+  are never written to the file. Per-computer tokens have no override.
+- The file is created with `O_CREAT | O_EXCL` and mode `0600` (its folder `0700`); updates go to a `0600`
+  temp file in the same folder and replace the file atomically. On Windows it inherits the folder's
+  permissions: keep `CC_MCP_HOME` in your user profile. A malformed file stops the relay with a message.
+- `ccctl` and the MCP server read the `api` token from the file on every call.
+
 ## Relay log
 
 At INFO, each API call has one summary with computer, operation, request id, time queued for
@@ -103,9 +130,19 @@ the HTTP caller's timeout. INFO also records connections (id, label, peer addres
 (duration, close code) and acknowledgements of queued cancels.
 
 WARNING records `relay_timeout` with queue time, requested timeout, relay wait and whether a cancel
-was queued; queued cancels, replaced connections (old and new peer address), oversized requests,
-rejected hellos (peer address and reason), unauthorized API requests, replies that arrive after the
-relay gave up (`answered late`, with how late) and unexpected replies.
+was queued; queued cancels, replaced connections (old and new peer address, replacement count), oversized
+requests, rejected hellos (peer address, claimed id and reason: `not JSON`, `not a hello`, `bad id`,
+`wrong token`, `token not valid for this id (it is computer #N's token)`, `shared token not valid for
+this id (it has its own token)`, `no hello within 10 s`), connections that use the deprecated shared
+token, computers disconnected because `tokens.json` changed, unusable `tokens.json` edits, unauthorized
+API requests, replies that arrive after the relay gave up (`answered late`, with how late) and
+unexpected replies.
+
+`/api/computers` (`cc_computers`, `ccctl computers`) lists, per computer: `id`, `label`, `host`,
+`connected_for_s`, `remote` (peer address), `auth` (`own_token`, or `shared_token` while the
+deprecated token is in use), `replacements` (how many times a new connection took over this id from an
+open one; a reboot can cause one), `last_replaced_s_ago` and `previous_remote` (the address of the
+connection it replaced; `null` when there was none).
 
 Tokens are never logged. INFO and above omit code, commands, file contents and returned values.
 DEBUG adds paths and code/command snippets (up to 200 characters, ASCII-escaped, with the full
