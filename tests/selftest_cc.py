@@ -142,20 +142,24 @@ async def mcp_checks():
             return "".join(getattr(c, "text", "") for c in r.content)
 
         t = await text("cc_ping", {})
-        check("MCP cc_ping", t.startswith("OK id=0"), t)
+        check("MCP cc_ping", t.startswith("OK\nid=0"), t)
         t = await text("cc_computers", {})
-        check("MCP cc_computers", '"id": 0' in t, t)
+        check("MCP cc_computers", t.startswith("OK\nid=0,") and "connected_for_s=" in t, t)
         t = await text("cc_exec", {"code": "return 6*7"})
         check("MCP cc_exec result", "returns: 42" in t, t)
         t = await text("cc_exec", {"code": "local x = nil; return x.y"})
         check("MCP cc_exec error is explicit", t.startswith("ERROR") and "runtime" in t and "attempt to index" in t, t)
         t = await text("cc_shell", {"command": "broken"})
-        check("MCP cc_shell shows program error", t.startswith("ERROR") and "blew up" in t, t)
+        check("MCP cc_shell shows program error", t.startswith("ERROR") and "blew up" in t and "start" in t, t)
         await text("cc_write", {"path": "mcp.txt", "content": "héllo — ok\n"})
         t = await text("cc_read", {"path": "mcp.txt"})
         check("MCP write/read UTF-8 round trip", "héllo — ok" in t, t)
+        t = await text("cc_write", {"path": "size.txt", "content": "1234"})
+        check("MCP cc_write reports remote size", "remote size 4 bytes" in t, t)
+        t = await text("cc_cancel", {})
+        check("MCP cc_cancel reports bridge flag", t == "OK\ncancelled: true", t)
         t = await text("cc_list", {})
-        check("MCP cc_list", "mcp.txt" in t, t)
+        check("MCP cc_list", "d rom/" in t and any(line.endswith(" mcp.txt") for line in t.splitlines()), t)
         t = await text("cc_log", {"lines": 5})
         check("MCP cc_log", "last_error_id" in t, t)
         t = await text("cc_exec", {"code": "sleep(30)", "timeout": 2})
@@ -178,6 +182,9 @@ async def mcp_checks():
         )
         t = await text("cc_exec", {"code": fake})
         check("fake peripherals installed", "faked" in t, t)
+        t = await text("cc_peripherals", {"methods": True})
+        check("cc_peripherals groups by type", "type widget  x2" in t and "dev_a, dev_b" in t, t)
+        check("cc_peripherals lists sorted methods once", t.count("methods:") == 1 and "boom, getX, setY" in t, t)
         t = await text("cc_network", {"methods": True})
         check("cc_network groups by type", "type widget  x2" in t and "dev_a, dev_b" in t, t)
         check(
@@ -219,14 +226,20 @@ async def mcp_checks():
         t = await text("cc_push", {"local_path": str(src), "remote_path": "pushed.txt"})
         check(
             "cc_push chunks a 150 KB file",
-            t.startswith("OK") and "chunk(s)" in t and "3 chunk" in t.replace("4 chunk", "3 chunk"),
+            t.startswith("OK") and "remote size" in t and "3 chunk" in t.replace("4 chunk", "3 chunk"),
             t,
         )
+        t = await text("cc_read", {"path": "pushed.txt"})
+        check("cc_read shows paging before file data", "[more data: call again with offset=" in t, t[:200])
         t = await text("cc_exec", {"code": "return #fs.open('pushed.txt','rb').readAll()"})
         check("remote size matches", str(len(big.encode("utf-8"))) in t, t + f" want {len(big.encode('utf-8'))}")
         dst = TMP / "pulled.txt"
         t = await text("cc_pull", {"remote_path": "pushed.txt", "local_path": str(dst)})
-        check("cc_pull round trip is byte-identical", t.startswith("OK") and dst.read_bytes() == big.encode("utf-8"), t)
+        check(
+            "cc_pull round trip is byte-identical",
+            t.startswith("OK\nsaved ") and str(dst) in t and dst.read_bytes() == big.encode("utf-8"),
+            t,
+        )
         t = await text("cc_push", {"local_path": str(Path(sys.executable)), "remote_path": "no.txt"})
         check("cc_push refuses files outside the allowed folders", "outside the allowed folders" in t, t)
 

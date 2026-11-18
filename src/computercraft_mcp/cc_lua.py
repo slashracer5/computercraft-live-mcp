@@ -105,7 +105,7 @@ def calls_code(calls: list[dict], parallel: bool) -> str:
 def parse_returned_json(res: dict):
     """Pull the JSON document a snippet returned out of an `exec` reply (or None)."""
     rets = res.get("returns") or []
-    if not rets:
+    if not isinstance(rets, list) or not rets:
         return None
     val = rets[0]
     for _ in range(2):  # exec serialises a Lua string as a JSON string; we returned JSON text inside it
@@ -115,48 +115,3 @@ def parse_returned_json(res: dict):
             except ValueError:
                 return None
     return val if isinstance(val, (dict, list)) else None
-
-
-# ---------------------------------------------------------------------------------- formatting
-def format_network(doc: dict) -> str:
-    devices = doc.get("devices") or []
-    lines = []
-    ship = []
-    if "on_ship" in doc:
-        ship.append(f"on_ship={doc['on_ship']}")
-    if "ship_mass" in doc:
-        ship.append(f"ship_mass={doc['ship_mass']}")
-    lines.append(f"{len(devices)} peripherals" + (f" ({', '.join(ship)})" if ship else ""))
-    for m in doc.get("modems") or []:
-        lines.append("modem: " + ", ".join(f"{k}={v}" for k, v in m.items()))
-    groups: dict[tuple, list[dict]] = {}
-    for d in devices:
-        key = (tuple(d.get("types") or ()), tuple(d.get("methods") or ()) if "methods" in d else None)
-        groups.setdefault(key, []).append(d)
-    for (types, methods), items in sorted(groups.items(), key=lambda kv: kv[0][0]):
-        lines.append("")
-        lines.append(f"type {'/'.join(types) or '?'}  x{len(items)}")
-        lines.append("  names: " + ", ".join(d["name"] for d in items))
-        if methods is not None:
-            lines.append("  methods: " + (", ".join(methods) or "(none)"))
-        for d in items:
-            if d.get("methods_error"):
-                lines.append(f"  {d['name']}: methods error: {d['methods_error']}")
-    lines.append("")
-    lines.append(
-        "Names can change after rewiring or rebuilding (ship_* zone names derive from the bow): "
-        "find peripherals by name prefix at run time, do not hard-code them."
-    )
-    return "\n".join(lines)
-
-
-def format_calls(doc: dict, calls: list[dict]) -> str:
-    lines = [f"{doc.get('n', len(calls))} call(s) in {doc.get('elapsed_ms', '?')} ms"]
-    for call, res in zip(calls, doc.get("results") or [], strict=False):
-        head = f"{call['peripheral']}.{call['method']}({', '.join(json.dumps(a) for a in call.get('args') or [])})"
-        if res.get("ok"):
-            vals = res.get("values") or []
-            lines.append(f"{head} -> " + (", ".join(json.dumps(v) for v in vals) if vals else "(no value)"))
-        else:
-            lines.append(f"{head} -> ERROR {res.get('error')}")
-    return "\n".join(lines)
