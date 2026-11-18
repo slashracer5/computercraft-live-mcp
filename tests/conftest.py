@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import json
 
 import aiohttp
@@ -6,7 +7,7 @@ import pytest
 import pytest_asyncio
 from aiohttp.test_utils import TestServer
 
-from computercraft_mcp import bridge_client, relay
+from computercraft_mcp import bridge_client, formatting, relay
 
 
 @pytest.fixture(autouse=True)
@@ -15,6 +16,16 @@ def isolated_home(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge_client, "HOME", tmp_path / "home")
     monkeypatch.delenv("CC_MCP_API_TOKEN", raising=False)
     monkeypatch.delenv("CC_MCP_COMPUTER_TOKEN", raising=False)
+
+
+@pytest.fixture
+def deterministic_ids(monkeypatch):
+    def reset():
+        ids = itertools.count(1)
+        monkeypatch.setattr(formatting, "_new_id", lambda: f"{next(ids):08x}")
+
+    reset()
+    return reset
 
 
 @pytest.fixture

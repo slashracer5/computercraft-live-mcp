@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import socket
 
 import pytest
@@ -24,10 +25,23 @@ def http_environment(monkeypatch):
     monkeypatch.setenv("no_proxy", "127.0.0.1")
 
 
+def unmarked(text: str) -> str:
+    """Formatter output without the untrusted-data markers (#18), to check the data inside them."""
+    return re.sub(r'<untrusted source="[A-Za-z_]+" id="[0-9a-f]{8}">|</untrusted id="[0-9a-f]{8}">', "", text)
+
+
 def test_format_success_result():
-    text = formatting.format_result(
-        "exec",
-        {"ok": True, "returns": ["42", '"hello"'], "stderr": ["warning"], "output": "hello world", "duration": 1.234},
+    text = unmarked(
+        formatting.format_result(
+            "exec",
+            {
+                "ok": True,
+                "returns": ["42", '"hello"'],
+                "stderr": ["warning"],
+                "output": "hello world",
+                "duration": 1.234,
+            },
+        )
     )
     assert text.splitlines()[0] == "OK [1.23s]"
     assert 'returns: 42, "hello"' in text

@@ -23,7 +23,7 @@ The in-game computer connects *out* to a small relay on your machine, so nothing
 
 Errors come back as data: an `ERROR` line, `error.kind`, message, traceback, hints for known causes and any `printError` output.
 
-`ccctl` prints the same text as the MCP tools; add `--json` for the raw result.
+Computer data (file contents, output, log lines, labels, peripheral names, error messages) comes back inside `<untrusted source="..." id="...">` ... `</untrusted id="...">` blocks with a random id, so it cannot pose as the server's own lines. `ccctl` prints the same text as the MCP tools; add `--json` for the raw result.
 
 ## Quick start
 
@@ -56,7 +56,7 @@ Full walkthrough, troubleshooting and the protocol reference: [docs/QUICKSTART.m
 
 ## Security
 
-This is a remote shell for a game computer. Keep the relay on loopback or a private network, never share `tokens.json`, and read [SECURITY.md](SECURITY.md) before running it anywhere other than your own machine. Anything the computer sends back is untrusted data.
+This is a remote shell for a game computer. Keep the relay on loopback or a private network, never share `tokens.json`, and read [SECURITY.md](SECURITY.md) before running it anywhere other than your own machine. Anything the computer sends back is untrusted data, and tool results mark it as such.
 
 ## Development
 
