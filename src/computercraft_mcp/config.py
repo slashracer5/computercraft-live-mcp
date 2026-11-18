@@ -1,0 +1,37 @@
+"""Shared environment configuration, read on first use.
+
+CC_MCP_HOME holds tokens.json; CC_MCP_URL selects the relay. CC_MCP_API_TOKEN and
+CC_MCP_COMPUTER_TOKEN override tokens. Token files are handled by the relay/client.
+CC_MCP_FILES_ROOT is read separately per file-transfer call in bridge_client.py.
+"""
+
+import os
+from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
+
+DEFAULT_PORT = 8765
+
+
+@dataclass(frozen=True)
+class Config:
+    home: Path
+    url: str
+    api_token: str | None = field(repr=False)
+    computer_token: str | None = field(repr=False)
+
+
+@lru_cache(maxsize=1)
+def get_config() -> Config:
+    """Read the environment once per process, without touching token files."""
+    return Config(
+        home=Path(os.environ.get("CC_MCP_HOME", Path.home() / ".computercraft-mcp")),
+        url=os.environ.get("CC_MCP_URL", f"http://127.0.0.1:{DEFAULT_PORT}").rstrip("/"),
+        api_token=os.environ.get("CC_MCP_API_TOKEN"),
+        computer_token=os.environ.get("CC_MCP_COMPUTER_TOKEN"),
+    )
+
+
+def reset_config() -> None:
+    """Clear the cached environment configuration (for tests or embedded use)."""
+    get_config.cache_clear()

@@ -10,6 +10,7 @@ from aiohttp.test_utils import TestServer as AiohttpTestServer
 
 from computercraft_mcp import bridge_client as bc
 from computercraft_mcp import formatting
+from computercraft_mcp.config import reset_config
 
 
 @pytest.fixture
@@ -23,6 +24,7 @@ def http_environment(monkeypatch):
     monkeypatch.setenv("CC_MCP_API_TOKEN", "test-api-token")
     monkeypatch.setenv("NO_PROXY", "127.0.0.1")
     monkeypatch.setenv("no_proxy", "127.0.0.1")
+    reset_config()
 
 
 def exec_reply(doc: dict) -> dict:
@@ -218,7 +220,8 @@ def test_request_reports_unreachable_relay(monkeypatch, http_environment):
     # Reserve a port without listening, so another process cannot claim it during the request.
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
-        monkeypatch.setattr(bc, "URL", f"http://127.0.0.1:{sock.getsockname()[1]}")
+        monkeypatch.setenv("CC_MCP_URL", f"http://127.0.0.1:{sock.getsockname()[1]}")
+        reset_config()
         result = bc.request("/api/computers")
     assert result["ok"] is False
     assert result["error"]["kind"] == "relay_unreachable"
@@ -234,7 +237,8 @@ async def test_request_handles_non_json_response(monkeypatch, http_environment, 
     app = web.Application()
     app.router.add_get("/api/computers", handler)
     async with AiohttpTestServer(app, host="127.0.0.1", port=0) as server:
-        monkeypatch.setattr(bc, "URL", str(server.make_url("/")).rstrip("/"))
+        monkeypatch.setenv("CC_MCP_URL", str(server.make_url("/")).rstrip("/"))
+        reset_config()
         result = await asyncio.to_thread(bc.request, "/api/computers")
     assert result["ok"] is False
     assert isinstance(result["error"], dict)

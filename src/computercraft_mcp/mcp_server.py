@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """MCP server exposing the ComputerCraft relay as tools (stdio).
 
-Configuration is by environment:
-  CC_MCP_URL        relay address (default http://127.0.0.1:8765)
-  CC_MCP_HOME       folder holding tokens.json (default ~/.computercraft-mcp)
-  CC_MCP_API_TOKEN  overrides tokens.json
-  CC_MCP_FILES_ROOT local folder(s) cc_push/cc_pull may touch (no default: they refuse until set)
+Env: CC_MCP_URL, CC_MCP_HOME, CC_MCP_API_TOKEN (shared through bridge_client; see config.py).
+CC_MCP_FILES_ROOT selects local folders cc_push/cc_pull may touch (read per call; no default).
 """
 
 import asyncio
@@ -15,6 +12,7 @@ from mcp.types import ToolAnnotations
 
 from . import bridge_client as bc
 from .formatting import format_result
+from .limits import DEFAULT_TIMEOUT, NETWORK_TIMEOUT
 
 INSTRUCTIONS = """\
 Tools for a real ComputerCraft computer inside a Minecraft world (through a relay).
@@ -79,7 +77,7 @@ async def cc_ping(computer: int | None = None) -> str:
 
 
 @server.tool(annotations=CHANGES)
-async def cc_exec(code: str, timeout: float = 30, reset: bool = False, computer: int | None = None) -> str:
+async def cc_exec(code: str, timeout: float = DEFAULT_TIMEOUT, reset: bool = False, computer: int | None = None) -> str:
     """Run Lua on the computer and return its output, return values and any error.
 
     `code` may be an expression (`os.getComputerID()`) or statements. Variables persist between
@@ -90,7 +88,7 @@ async def cc_exec(code: str, timeout: float = 30, reset: bool = False, computer:
 
 
 @server.tool(annotations=CHANGES)
-async def cc_shell(command: str, timeout: float = 30, computer: int | None = None) -> str:
+async def cc_shell(command: str, timeout: float = DEFAULT_TIMEOUT, computer: int | None = None) -> str:
     """Run a shell command or program (`ls`, `edit`-less programs, `myprogram arg`) and return its output.
 
     A failing program returns ERROR with the message and its printError output in `stderr`.
@@ -102,26 +100,27 @@ async def cc_shell(command: str, timeout: float = 30, computer: int | None = Non
 @server.tool(annotations=READ_ONLY)
 async def cc_read(path: str, offset: int = 0, computer: int | None = None) -> str:
     """Read a file from the computer (up to ~60 KB per call; page with offset when told more remains)."""
-    return await _call("read", computer, 30, path=path, offset=offset)
+    return await _call("read", computer, DEFAULT_TIMEOUT, path=path, offset=offset)
 
 
 @server.tool(annotations=CHANGES)
 async def cc_write(path: str, content: str, append: bool = False, computer: int | None = None) -> str:
-    """Write (or append to) a file on the computer. Text is sent as UTF-8; keep each call under ~100 KB
-    and use append=True for larger files. Overwrites without asking."""
-    return await _call("write", computer, 30, path=path, data=content, append=append or None)
+    """Write (or append to) a file on the computer. Text is sent as UTF-8. Keep each call under ~100 KB
+    (non-ASCII characters count ~6 bytes each); for larger files use append=True or cc_push.
+    Overwrites without asking."""
+    return await _call("write", computer, DEFAULT_TIMEOUT, path=path, data=content, append=append or None)
 
 
 @server.tool(annotations=READ_ONLY)
 async def cc_list(path: str = "", computer: int | None = None) -> str:
     """List a directory: `d name/` for directories, byte size then name for files."""
-    return await _call("list", computer, 30, path=path)
+    return await _call("list", computer, DEFAULT_TIMEOUT, path=path)
 
 
 @server.tool(annotations=READ_ONLY)
 async def cc_peripherals(methods: bool = False, computer: int | None = None) -> str:
     """List attached peripherals grouped by type; methods=True lists each group's methods once."""
-    return await _call("peripherals", computer, 30, methods=methods or None)
+    return await _call("peripherals", computer, DEFAULT_TIMEOUT, methods=methods or None)
 
 
 @server.tool(annotations=READ_ONLY)
@@ -149,7 +148,7 @@ async def cc_network(methods: bool = False, computer: int | None = None) -> str:
     Sable ship (and its mass). methods=True also lists each group's method names once.
 
     Names in the output are exactly what to pass to cc_call / cc_batch / peripheral.call. Read-only."""
-    res = await asyncio.to_thread(bc.network, methods, computer, 60)
+    res = await asyncio.to_thread(bc.network, methods, computer, NETWORK_TIMEOUT)
     return format_result("network", res)
 
 
@@ -160,7 +159,11 @@ async def _run_calls(calls: list[dict], parallel: bool, timeout: float, computer
 
 @server.tool(annotations=CHANGES)
 async def cc_call(
-    peripheral: str, method: str, args: list | None = None, timeout: float = 30, computer: int | None = None
+    peripheral: str,
+    method: str,
+    args: list | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    computer: int | None = None,
 ) -> str:
     """Call one peripheral method and return its result(s): `peripheral.call(name, method, *args)`.
 
@@ -173,7 +176,9 @@ async def cc_call(
 
 
 @server.tool(annotations=CHANGES)
-async def cc_batch(calls: list[dict], parallel: bool = True, timeout: float = 30, computer: int | None = None) -> str:
+async def cc_batch(
+    calls: list[dict], parallel: bool = True, timeout: float = DEFAULT_TIMEOUT, computer: int | None = None
+) -> str:
     """Run many peripheral calls in one request. `calls` = [{"peripheral": "ship_...", "method": "getSpeed",
     "args": []}, ...]. With parallel=True (default) they run concurrently, so N reads cost one game tick instead
     of N (use for sensor sweeps and control-loop style reads/writes). Each call reports its own result or error."""
@@ -189,7 +194,7 @@ async def cc_push(local_path: str, remote_path: str, append: bool = False, compu
     Relative local paths are taken from the first folder in CC_MCP_FILES_ROOT; only the folders listed there are
     allowed.
     Use this to deploy programs instead of pasting their source through cc_write."""
-    res = await asyncio.to_thread(bc.push_file, local_path, remote_path, computer, 30, append)
+    res = await asyncio.to_thread(bc.push_file, local_path, remote_path, computer, DEFAULT_TIMEOUT, append)
     return format_result("push", res)
 
 
@@ -198,7 +203,7 @@ async def cc_pull(remote_path: str, local_path: str, computer: int | None = None
     """Download a computer file (text/CSV/log; large files are paged automatically) into a local folder.
     Overwrites the local file, but only once the whole download arrived (a failed pull leaves it intact).
     Only the folders listed in CC_MCP_FILES_ROOT are allowed."""
-    res = await asyncio.to_thread(bc.pull_file, remote_path, local_path, computer, 30)
+    res = await asyncio.to_thread(bc.pull_file, remote_path, local_path, computer, DEFAULT_TIMEOUT)
     return format_result("pull", res)
 
 
@@ -208,7 +213,7 @@ async def cc_find(pattern: str, max_results: int = 200, computer: int | None = N
     """Find files and directories by path pattern (CC's fs.find): `*` matches any characters within one path
     segment, e.g. `*.lua`, `programs/*`, `*/*.log`; there is no recursive `**`. Lists each match with its byte size
     (`d path/` for directories), sorted, at most max_results (up to 1000). Read-only."""
-    res = await asyncio.to_thread(bc.fs_find, pattern, max_results, computer, 30)
+    res = await asyncio.to_thread(bc.fs_find, pattern, max_results, computer, DEFAULT_TIMEOUT)
     return format_result("find", res)
 
 
@@ -219,7 +224,7 @@ async def cc_grep(
     plain: bool = True,
     max_matches: int = 200,
     include_rom: bool = False,
-    timeout: float = 30,
+    timeout: float = DEFAULT_TIMEOUT,
     computer: int | None = None,
 ) -> str:
     """Search file contents and return `path:line: text` for each matching line.
@@ -236,7 +241,7 @@ async def cc_grep(
 async def cc_stat(path: str, computer: int | None = None) -> str:
     """Describe one path: whether it exists, file (size) or directory (entry count), read-only, its drive with
     capacity and free space, and created/modified times where CC reports them. Read-only."""
-    res = await asyncio.to_thread(bc.fs_stat, path, computer, 30)
+    res = await asyncio.to_thread(bc.fs_stat, path, computer, DEFAULT_TIMEOUT)
     return format_result("stat", res)
 
 
@@ -244,7 +249,7 @@ async def cc_stat(path: str, computer: int | None = None) -> str:
 async def cc_delete(path: str, recursive: bool = False, computer: int | None = None) -> str:
     """Delete a file or directory on the computer. There is no undo or trash. A non-empty directory is refused unless
     recursive=True, which deletes everything inside it. The root directory and read-only paths (rom/) are refused."""
-    res = await asyncio.to_thread(bc.fs_delete, path, recursive, computer, 30)
+    res = await asyncio.to_thread(bc.fs_delete, path, recursive, computer, DEFAULT_TIMEOUT)
     return format_result("delete", res)
 
 
@@ -252,7 +257,7 @@ async def cc_delete(path: str, recursive: bool = False, computer: int | None = N
 async def cc_move(src: str, dst: str, computer: int | None = None) -> str:
     """Move or rename a file or directory. `dst` is the new full path (not a folder to move into) and must not exist:
     CC never overwrites. Missing parent folders of `dst` are created. Programs that use the old path will break."""
-    res = await asyncio.to_thread(bc.fs_move, src, dst, computer, 30)
+    res = await asyncio.to_thread(bc.fs_move, src, dst, computer, DEFAULT_TIMEOUT)
     return format_result("move", res)
 
 
@@ -260,14 +265,14 @@ async def cc_move(src: str, dst: str, computer: int | None = None) -> str:
 async def cc_copy(src: str, dst: str, computer: int | None = None) -> str:
     """Copy a file or directory (recursively). `dst` is the new full path and must not exist: CC never overwrites.
     Missing parent folders of `dst` are created; copying out of rom/ works."""
-    res = await asyncio.to_thread(bc.fs_copy, src, dst, computer, 30)
+    res = await asyncio.to_thread(bc.fs_copy, src, dst, computer, DEFAULT_TIMEOUT)
     return format_result("copy", res)
 
 
 @server.tool(annotations=ADDS_IDEMPOTENT)
 async def cc_mkdir(path: str, computer: int | None = None) -> str:
     """Create a directory, including missing parents. An existing directory is fine (the result says so)."""
-    res = await asyncio.to_thread(bc.fs_mkdir, path, computer, 30)
+    res = await asyncio.to_thread(bc.fs_mkdir, path, computer, DEFAULT_TIMEOUT)
     return format_result("mkdir", res)
 
 

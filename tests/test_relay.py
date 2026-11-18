@@ -5,13 +5,14 @@ import aiohttp
 import pytest
 
 from computercraft_mcp import relay
+from computercraft_mcp.config import get_config
 
 
 def test_tokens_are_distinct_and_persisted(tokens):
     assert tokens["api"]
     assert tokens["computer"]
     assert tokens["api"] != tokens["computer"]
-    assert json.loads((relay.HOME / "tokens.json").read_text()) == tokens
+    assert json.loads((get_config().home / "tokens.json").read_text()) == tokens
     assert relay.load_tokens() == tokens
 
 

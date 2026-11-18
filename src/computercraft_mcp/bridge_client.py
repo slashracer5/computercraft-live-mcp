@@ -2,8 +2,8 @@
 (find/grep/stat/delete/move/copy/mkdir) and file transfer.
 
 Used by ccctl.py (command line) and mcp_server.py (MCP tools), so both send the same requests.
-Env: CC_MCP_URL (default http://127.0.0.1:8765), CC_MCP_API_TOKEN,
-CC_MCP_HOME (default ~/.computercraft-mcp, holds tokens.json).
+Env: CC_MCP_URL, CC_MCP_API_TOKEN, CC_MCP_HOME (see config.py).
+CC_MCP_FILES_ROOT is read per file-transfer call.
 """
 
 import contextlib
@@ -17,37 +17,48 @@ import urllib.request
 from pathlib import Path
 
 from . import cc_lua
+from .config import get_config
+from .limits import (
+    CLIENT_TIMEOUT_MARGIN,
+    DEFAULT_TIMEOUT,
+    NETWORK_TIMEOUT,
+    PUSH_CHUNK_CHARS,
+    PUSH_CHUNK_JSON_BYTES,
+    PUSH_CHUNK_MIN_CHARS,
+)
 
-HOME = Path(os.environ.get("CC_MCP_HOME", Path.home() / ".computercraft-mcp"))
-URL = os.environ.get("CC_MCP_URL", "http://127.0.0.1:8765").rstrip("/")
 BRIDGE_LUA = Path(__file__).parent / "bridge.lua"  # the copy shipped with the package (the relay serves it too)
 
 
 def api_token() -> str:
-    if os.environ.get("CC_MCP_API_TOKEN"):
-        return os.environ["CC_MCP_API_TOKEN"]
-    return json.loads((HOME / "tokens.json").read_text())["api"]
+    config = get_config()
+    if config.api_token:
+        return config.api_token
+    return json.loads((config.home / "tokens.json").read_text())["api"]
 
 
 def request(path: str, body: dict | None = None) -> dict:
     """GET (no body) or POST (JSON body) to the relay. Never raises for relay-side errors."""
+    config = get_config()
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
-        URL + path,
+        config.url + path,
         data=data,
         method="POST" if data else "GET",
         headers={"Authorization": "Bearer " + api_token(), "Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=float((body or {}).get("timeout", 30)) + 15) as r:
+        with urllib.request.urlopen(
+            req, timeout=float((body or {}).get("timeout", DEFAULT_TIMEOUT)) + CLIENT_TIMEOUT_MARGIN
+        ) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         return json.load(e)
     except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
-        return {"ok": False, "error": {"kind": "relay_unreachable", "message": f"{URL}: {e}"}}
+        return {"ok": False, "error": {"kind": "relay_unreachable", "message": f"{config.url}: {e}"}}
 
 
-def call(op: str, computer: int | None = None, timeout: float = 30, **args) -> dict:
+def call(op: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT, **args) -> dict:
     body = {"op": op, "timeout": timeout, **{k: v for k, v in args.items() if v is not None}}
     if computer is not None:
         body["computer"] = computer
@@ -58,12 +69,14 @@ def call(op: str, computer: int | None = None, timeout: float = 30, **args) -> d
 CALL_SHAPE = 'each call needs {"peripheral": name, "method": name, "args": [...]}'
 
 
-def network(methods: bool = False, computer: int | None = None, timeout: float = 60) -> dict:
+def network(methods: bool = False, computer: int | None = None, timeout: float = NETWORK_TIMEOUT) -> dict:
     """Inventory every peripheral the computer can see (cc_network); format with format_result("network", ...)."""
     return call("exec", computer, timeout, code=cc_lua.network_code(methods))
 
 
-def run_calls(calls: list, parallel: bool = True, computer: int | None = None, timeout: float = 30) -> dict:
+def run_calls(
+    calls: list, parallel: bool = True, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT
+) -> dict:
     """Run peripheral calls [{"peripheral", "method", "args"}] in one exec (cc_call / cc_batch); format with
     format_result("calls", res, calls=calls). A malformed list fails with bad_request before anything is sent."""
     if not isinstance(calls, list) or not all(_valid_call(c) for c in calls):
@@ -98,7 +111,9 @@ FS_FIELDS = {  # what each result keeps from the snippet's JSON (anything else i
 }
 
 
-def fs_find(pattern: str, max_results: int = 200, computer: int | None = None, timeout: float = 30) -> dict:
+def fs_find(
+    pattern: str, max_results: int = 200, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT
+) -> dict:
     """Paths matching a fs.find glob (`*` within one path segment), sorted, at most max_results of them."""
     if not isinstance(pattern, str) or not pattern.strip():
         return _bad_request("find needs a pattern, e.g. *.lua or programs/*")
@@ -113,7 +128,7 @@ def fs_grep(
     max_matches: int = 200,
     include_rom: bool = False,
     computer: int | None = None,
-    timeout: float = 30,
+    timeout: float = DEFAULT_TIMEOUT,
 ) -> dict:
     """Matching lines (path, line number, text) in the files under `path`. The search stops by itself shortly before
     `timeout`, so a big tree returns what it found instead of timing out."""
@@ -124,12 +139,14 @@ def fs_grep(
     return _fs_request("grep", code, computer, timeout, lambda doc: _fs_failure(doc, "search", path))
 
 
-def fs_stat(path: str, computer: int | None = None, timeout: float = 30) -> dict:
+def fs_stat(path: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict:
     """Whether `path` exists and, if so, what it is (see cc_lua.stat_code)."""
     return _fs_request("stat", cc_lua.stat_code(path), computer, timeout, lambda doc: _fs_failure(doc, "stat", path))
 
 
-def fs_delete(path: str, recursive: bool = False, computer: int | None = None, timeout: float = 30) -> dict:
+def fs_delete(
+    path: str, recursive: bool = False, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT
+) -> dict:
     """Delete a file or directory; a non-empty directory only with recursive=True. Never the root."""
     if _outside(path):
         return _bad_request(f"refusing to delete {path!r}: that is the root directory (or above it)")
@@ -137,17 +154,17 @@ def fs_delete(path: str, recursive: bool = False, computer: int | None = None, t
     return _fs_request("delete", code, computer, timeout, lambda doc: _fs_failure(doc, "delete", path))
 
 
-def fs_move(src: str, dst: str, computer: int | None = None, timeout: float = 30) -> dict:
+def fs_move(src: str, dst: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict:
     """Move/rename `src` to the full path `dst`, which must not exist yet."""
     return _fs_transfer("move", src, dst, computer, timeout)
 
 
-def fs_copy(src: str, dst: str, computer: int | None = None, timeout: float = 30) -> dict:
+def fs_copy(src: str, dst: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict:
     """Copy `src` (recursively) to the full path `dst`, which must not exist yet."""
     return _fs_transfer("copy", src, dst, computer, timeout)
 
 
-def fs_mkdir(path: str, computer: int | None = None, timeout: float = 30) -> dict:
+def fs_mkdir(path: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict:
     """Create a directory and any missing parents; an existing directory is success (existed=True)."""
     if _outside(path):
         return _bad_request(f"refusing to create {path!r}: that is the root directory (or above it)")
@@ -267,7 +284,7 @@ def push_file(
     local: str,
     remote: str,
     computer: int | None = None,
-    timeout: float = 30,
+    timeout: float = DEFAULT_TIMEOUT,
     append: bool = False,
     *,
     check_roots: bool = True,
@@ -281,7 +298,9 @@ def push_file(
     return push_text(text, remote, computer, timeout, append)
 
 
-def push_text(text: str, remote: str, computer: int | None = None, timeout: float = 30, append: bool = False) -> dict:
+def push_text(
+    text: str, remote: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT, append: bool = False
+) -> dict:
     """Upload text in chunks that fit the relay's request limit.
 
     An overwrite is atomic: one check request (space, read-only, directory), the chunks into part_path(remote),
@@ -327,12 +346,12 @@ def part_path(remote: str) -> str:
 
 
 def push_chunk(text: str, pos: int = 0) -> str:
-    """The next chunk from `pos`, halved until its JSON-escaped form fits the relay's request limit
-    (non-ASCII text escapes to 6 bytes per char)."""
-    n = 60000
+    """The next chunk from `pos`: PUSH_CHUNK_CHARS characters, halved until its JSON-escaped bytes fit
+    PUSH_CHUNK_JSON_BYTES (non-ASCII text escapes to 6 bytes per char; see limits.py)."""
+    n = PUSH_CHUNK_CHARS
     while True:
         piece = text[pos : pos + n]
-        if len(json.dumps(piece)) <= 75000 or n <= 500:
+        if len(json.dumps(piece).encode()) <= PUSH_CHUNK_JSON_BYTES or n <= PUSH_CHUNK_MIN_CHARS:
             return piece
         n //= 2
 
@@ -417,7 +436,7 @@ def _discard_part(part: str, computer: int | None, timeout: float) -> bool:
 
 
 def pull_file(
-    remote: str, local: str, computer: int | None = None, timeout: float = 30, *, check_roots: bool = True
+    remote: str, local: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT, *, check_roots: bool = True
 ) -> dict:
     """Download a computer file to a local path. Intended for text (ASCII/UTF-8); chunk edges are byte offsets.
 
