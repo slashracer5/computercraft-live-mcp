@@ -23,7 +23,7 @@ The in-game computer connects *out* to a small relay on your machine, so nothing
 
 Errors come back as data: an `ERROR` line, `error.kind`, message, traceback, hints for known causes and any `printError` output.
 
-Computer data (file contents, output, log lines, labels, peripheral names, error messages) comes back inside `<untrusted source="..." id="...">` ... `</untrusted id="...">` blocks with a random id, so it cannot pose as the server's own lines. `ccctl` prints the same text as the MCP tools; add `--json` for the raw result.
+Computer data (file contents, output, log lines, labels, peripheral names, error messages) comes back inside `<untrusted source="..." id="...">` ... `</untrusted id="...">` blocks with a random id, so it cannot pose as the server's own lines. `ccctl` has a subcommand for every tool and prints the same text; add `--json` for the raw result.
 
 ## Quick start
 
@@ -52,7 +52,7 @@ Full walkthrough, troubleshooting and the protocol reference: [docs/QUICKSTART.m
 | `CC_MCP_URL` | `http://127.0.0.1:8765` | relay address used by the MCP server and `ccctl` |
 | `CC_MCP_HOME` | `~/.computercraft-mcp` | folder holding `tokens.json` (created on first run) |
 | `CC_MCP_API_TOKEN` / `CC_MCP_COMPUTER_TOKEN` | from `tokens.json` | override the tokens |
-| `CC_MCP_FILES_ROOT` | *(unset: push/pull refuse)* | local folder(s) `cc_push` / `cc_pull` may touch, separated by `;` on Windows and `:` elsewhere |
+| `CC_MCP_FILES_ROOT` | *(unset: push/pull refuse)* | local folder(s) `cc_push` / `cc_pull` may touch, separated by `;` on Windows and `:` elsewhere (`ccctl` uses the paths you type) |
 
 ## Security
 
