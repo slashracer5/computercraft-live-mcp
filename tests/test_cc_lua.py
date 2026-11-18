@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -74,6 +75,11 @@ def exec_reply(doc):
     return {"ok": True, "returns": [json.dumps(json.dumps(doc))]}
 
 
+def unmarked(text: str) -> str:
+    """Formatter output without the untrusted-data markers (#18), to check the data inside them."""
+    return re.sub(r'<untrusted source="[A-Za-z_]+" id="[0-9a-f]{8}">|</untrusted id="[0-9a-f]{8}">', "", text)
+
+
 def test_format_calls():
     calls = [
         {"peripheral": "left", "method": "set", "args": [42]},
@@ -85,7 +91,7 @@ def test_format_calls():
         "elapsed_ms": 12,
         "results": [{"ok": True, "values": [42, "yes"]}, {"ok": False, "error": "boom"}, {"ok": True}],
     }
-    text = formatting.format_result("calls", exec_reply(doc), calls=calls)
+    text = unmarked(formatting.format_result("calls", exec_reply(doc), calls=calls))
     assert "3 call(s)" in text
     assert "12 ms" in text
     assert 'left.set(42) -> 42, "yes"' in text

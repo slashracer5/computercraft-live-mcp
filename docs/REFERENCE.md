@@ -67,9 +67,33 @@ Ops: `exec` (persistent session env, `reset` clears), `shell`, `read` (`offset`;
 `formatting.format_result(op, res, calls=...)` selects an operation from `FORMATTERS`.
 MCP tools and `ccctl` use it for all human-readable results; `ccctl --json` prints the raw result.
 The first line is `OK` or `ERROR`, with duration appended when present (`OK [0.12s]` / `ERROR [1.25s]`).
-Next come any hint, error kind/message/traceback and `stderr`, in that order.
+Next come any hint, error kind, error message/traceback and `stderr`, in that order.
 Job results retain terminal `output:` even on failure, including the `(truncated, tail kept)` note.
 Durations and read paging instructions precede the computer data they describe.
+
+Computer data is wrapped in markers so that it cannot pass itself off as the server's own lines:
+
+```
+OK [0.05s]
+[more data: call again with offset=60000]
+<untrusted source="file" id="3f9a0c1b">
+...file contents, verbatim...
+</untrusted id="3f9a0c1b">
+```
+
+Every block gets a fresh random 8-hex-digit id that does not occur in its content, so the content cannot
+close the block early. A one-line value inside a server line uses the same markers on that line
+(`returns: <untrusted source="returns" id="…">42</untrusted id="…">`). `source` is a fixed word chosen by
+the formatter (`file`, `output`, `returns`, `stderr`, `error`, `listing`, `terminal`, `printError`,
+`peripherals`, `on_ship`, `computers`, `ping`, `call`, `call_error`, `result`).
+Wrapped: file data, terminal output, return values, `stderr`, terminal and `printError` log lines, directory
+listings, peripheral names/types/methods and modem info, computer labels and host strings (`ping`,
+`computers`), `cc_call`/`cc_batch` values and errors, the JSON of unknown operations, and every error
+message and traceback. Error messages are wrapped even when the relay or the client wrote them: the
+formatter cannot tell those apart from a computer reply that claims the same kind. The kind itself is a
+server line (`  error: runtime`) only when it is in `formatting.KNOWN_KINDS`; any other kind goes inside
+the error block. Status, hints, paging instructions, counts, sizes and durations stay outside the blocks.
+`ccctl` prints the same text, markers included; `ccctl --json` prints the raw result without markers.
 
 - `exec` / `shell`: return values (`returns: 42`) and captured output.
 - `read`: file data, preceded by `[more data: call again with offset=N]` whenever `eof` is false.
