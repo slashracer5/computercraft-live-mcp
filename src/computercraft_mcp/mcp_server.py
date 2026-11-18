@@ -14,7 +14,6 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from . import bridge_client as bc
-from . import cc_lua
 from .formatting import format_result
 
 INSTRUCTIONS = """\
@@ -144,24 +143,12 @@ async def cc_network(methods: bool = False, computer: int | None = None) -> str:
     Sable ship (and its mass). methods=True also lists each group's method names once.
 
     Names in the output are exactly what to pass to cc_call / cc_batch / peripheral.call. Read-only."""
-    res = await asyncio.to_thread(bc.call, "exec", computer, 60, code=cc_lua.network_code(methods))
+    res = await asyncio.to_thread(bc.network, methods, computer, 60)
     return format_result("network", res)
 
 
 async def _run_calls(calls: list[dict], parallel: bool, timeout: float, computer: int | None) -> str:
-    for c in calls:
-        if not isinstance(c, dict) or not c.get("peripheral") or not c.get("method"):
-            return format_result(
-                "calls",
-                {
-                    "ok": False,
-                    "error": {
-                        "kind": "bad_request",
-                        "message": 'each call needs {"peripheral": name, "method": name, "args": [...]}',
-                    },
-                },
-            )
-    res = await asyncio.to_thread(bc.call, "exec", computer, timeout, code=cc_lua.calls_code(calls, parallel))
+    res = await asyncio.to_thread(bc.run_calls, calls, parallel, computer, timeout)
     return format_result("calls", res, calls=calls)
 
 

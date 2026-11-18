@@ -1,6 +1,6 @@
-"""Shared client code for the CC bridge relay: HTTP calls and file transfer.
+"""Shared client code for the CC bridge relay: HTTP calls, the network/call/batch requests and file transfer.
 
-Used by ccctl.py (command line) and mcp_server.py (MCP tools).
+Used by ccctl.py (command line) and mcp_server.py (MCP tools), so both send the same requests.
 Env: CC_MCP_URL (default http://127.0.0.1:8765), CC_MCP_API_TOKEN,
 CC_MCP_HOME (default ~/.computercraft-mcp, holds tokens.json).
 """
@@ -19,6 +19,7 @@ from . import cc_lua
 
 HOME = Path(os.environ.get("CC_MCP_HOME", Path.home() / ".computercraft-mcp"))
 URL = os.environ.get("CC_MCP_URL", "http://127.0.0.1:8765").rstrip("/")
+BRIDGE_LUA = Path(__file__).parent / "bridge.lua"  # the copy shipped with the package (the relay serves it too)
 
 
 def api_token() -> str:
@@ -52,6 +53,33 @@ def call(op: str, computer: int | None = None, timeout: float = 30, **args) -> d
     return request("/api/call", body)
 
 
+# ---------------------------------------------------------------------------------- snippets (network, calls)
+CALL_SHAPE = 'each call needs {"peripheral": name, "method": name, "args": [...]}'
+
+
+def network(methods: bool = False, computer: int | None = None, timeout: float = 60) -> dict:
+    """Inventory every peripheral the computer can see (cc_network); format with format_result("network", ...)."""
+    return call("exec", computer, timeout, code=cc_lua.network_code(methods))
+
+
+def run_calls(calls: list, parallel: bool = True, computer: int | None = None, timeout: float = 30) -> dict:
+    """Run peripheral calls [{"peripheral", "method", "args"}] in one exec (cc_call / cc_batch); format with
+    format_result("calls", res, calls=calls). A malformed list fails with bad_request before anything is sent."""
+    if not isinstance(calls, list) or not all(_valid_call(c) for c in calls):
+        return {"ok": False, "error": {"kind": "bad_request", "message": CALL_SHAPE}}
+    return call("exec", computer, timeout, code=cc_lua.calls_code(calls, parallel))
+
+
+def _valid_call(c) -> bool:
+    return (
+        isinstance(c, dict)
+        and isinstance(c.get("peripheral"), str)
+        and isinstance(c.get("method"), str)
+        and bool(c["peripheral"] and c["method"])
+        and isinstance(c.get("args") or [], list)
+    )
+
+
 # ---------------------------------------------------------------------------------- file transfer
 def files_roots() -> list[Path]:
     """Local folders push/pull may touch: only those listed in CC_MCP_FILES_ROOT (os.pathsep separated).
@@ -80,12 +108,25 @@ def resolve_local(path: str) -> Path:
     return p
 
 
-def push_file(local: str, remote: str, computer: int | None = None, timeout: float = 30, append: bool = False) -> dict:
-    """Upload a local UTF-8 text file (see push_text)."""
+def _local(path: str, check_roots: bool) -> Path:
+    # check_roots=False is for ccctl only: there the user typed the path. The MCP tools always check.
+    return resolve_local(path) if check_roots else Path(path).expanduser().resolve()
+
+
+def push_file(
+    local: str,
+    remote: str,
+    computer: int | None = None,
+    timeout: float = 30,
+    append: bool = False,
+    *,
+    check_roots: bool = True,
+) -> dict:
+    """Upload a local UTF-8 text file (see push_text). check_roots=False skips the CC_MCP_FILES_ROOT check."""
     try:
-        with open(resolve_local(local), encoding="utf-8", newline="") as fh:  # newline="": keep CRLF/LF exactly
+        with open(_local(local, check_roots), encoding="utf-8", newline="") as fh:  # newline="": keep CRLF/LF exactly
             text = fh.read()
-    except (OSError, UnicodeDecodeError, PermissionError) as e:
+    except (OSError, UnicodeDecodeError) as e:
         return {"ok": False, "error": {"kind": "local_file", "message": str(e)}}
     return push_text(text, remote, computer, timeout, append)
 
@@ -225,14 +266,16 @@ def _discard_part(part: str, computer: int | None, timeout: float) -> bool:
     return doc is not None and doc.get("gone") is True
 
 
-def pull_file(remote: str, local: str, computer: int | None = None, timeout: float = 30) -> dict:
+def pull_file(
+    remote: str, local: str, computer: int | None = None, timeout: float = 30, *, check_roots: bool = True
+) -> dict:
     """Download a computer file to a local path. Intended for text (ASCII/UTF-8); chunk edges are byte offsets.
 
     The local file is only replaced once everything arrived (temp file + os.replace): a failed pull leaves an
-    existing file as it was."""
+    existing file as it was. check_roots=False skips the CC_MCP_FILES_ROOT check."""
     try:
-        dest = resolve_local(local)
-    except PermissionError as e:
+        dest = _local(local, check_roots)
+    except OSError as e:
         return {"ok": False, "error": {"kind": "local_file", "message": str(e)}}
     if dest.is_dir():
         return {"ok": False, "error": {"kind": "local_file", "message": f"{dest} is a directory"}}

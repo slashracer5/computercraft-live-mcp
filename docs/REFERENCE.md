@@ -16,14 +16,15 @@ MCP client --MCP (computercraft-mcp) / ccctl--> relay <--outbound websocket-- br
 |---|---|
 | `src/computercraft_mcp/bridge.lua` | in-game client. Hosts the computer's shell, records the terminal, answers requests |
 | `src/computercraft_mcp/relay.py` | aiohttp relay: `/ws` (computer), `/api/call` (control), `/bridge.lua` (install), `/healthz` |
-| `src/computercraft_mcp/bridge_client.py` | shared HTTP + file transfer and root checks |
+| `src/computercraft_mcp/bridge_client.py` | shared by MCP tools and ccctl: HTTP calls, `network` / `run_calls` (with call validation), chunked file transfer and root checks |
 | `src/computercraft_mcp/formatting.py` | per-operation formatters shared by MCP tools and ccctl; common header and computer-data emission helper |
-| `src/computercraft_mcp/ccctl.py` | command-line client |
+| `src/computercraft_mcp/ccctl.py` | command-line client: one subcommand per MCP tool, plus `update-bridge` |
 | `src/computercraft_mcp/mcp_server.py` | MCP tools: `cc_exec cc_shell cc_read cc_write cc_list cc_peripherals cc_log cc_cancel cc_ping cc_computers cc_network cc_call cc_batch cc_push cc_pull` |
 | `src/computercraft_mcp/cc_lua.py` | Lua snippet builders and returned-JSON parser for `cc_network` / `cc_call` / `cc_batch` and the `cc_push` check/swap steps (run through `exec`) |
 | `tests/test_*.py`, `tests/conftest.py` | pytest suite: helpers, the relay with a fake computer (in-process, free ports), file transfer; strict `xfail` tests document #1 and #5 |
 | `tests/test_formatting.py` / `tests/test_formatting_clients.py` | formatter snapshots, error cases and MCP/CLI routing checks |
 | `tests/test_atomic_transfer.py` | `cc_push` / `cc_pull` atomicity against a fake computer (failed chunks, preflight refusals, local replace) |
+| `tests/test_ccctl.py` | every MCP tool has a `ccctl` subcommand (and a row below), same request and text as the tool, exit status, `--json`, chunked `write`, `update-bridge` |
 | `tests/selftest_cc.py` | end-to-end in headless CraftOS-PC incl. MCP client, reboot, relay restart; run by `tests/test_e2e_craftos.py` (marker `e2e`) or on its own; `CRAFTOS_PC` overrides the emulator path |
 | `.github/workflows/ci.yml` | CI: ruff check / format check, pytest on Python 3.10–3.14 × Linux, Windows, macOS |
 
@@ -36,7 +37,41 @@ computercraft-mcp-relay --host 127.0.0.1 --port 8765
 ```
 In-game: `wget http://HOST:PORT/bridge.lua bridge.lua`, then `bridge ws://HOST:PORT/ws <computer-token>`.
 For restarts put `shell.run("bridge")` in `startup.lua` (the url/token are saved in `.bridge.json`).
-Update the bridge from the PC: `ccctl write bridge.lua --file <path to bridge.lua>`, then `ccctl exec "os.reboot()"`.
+Update the bridge from the PC: `ccctl update-bridge` (uploads the `bridge.lua` shipped with the installed package to
+`bridge.lua` on the computer, atomically), then `ccctl exec "os.reboot()"` (it reports `disconnected`: expected).
+
+## Command line (`ccctl`)
+
+`ccctl` sends the same requests as the MCP tools and prints the same text (markers included); `--json` prints the
+raw result instead. Shared flags, before or after the subcommand: `--json`, `--computer ID`, `--timeout SECONDS`
+(per request; default 30, `network` 60). Exit status is 1 when the relay or the operation fails, including
+`computers` (relay down, wrong token) and `call` / `batch` when any call fails; otherwise 0.
+
+| MCP tool | ccctl |
+|---|---|
+| `cc_computers` | `ccctl computers` |
+| `cc_ping` | `ccctl ping` |
+| `cc_exec` | `ccctl exec CODE [--reset]` |
+| `cc_shell` | `ccctl shell COMMAND` |
+| `cc_read` | `ccctl read PATH [--offset N]` |
+| `cc_write` | `ccctl write PATH [--file LOCAL] [--append]` (text from stdin without `--file`) |
+| `cc_list` | `ccctl ls [PATH]` |
+| `cc_peripherals` | `ccctl periph [--methods]` |
+| `cc_log` | `ccctl log [--lines N] [--errors-only] [--since-error ID]` |
+| `cc_cancel` | `ccctl cancel` |
+| `cc_network` | `ccctl network [--methods]` |
+| `cc_call` | `ccctl call PERIPHERAL METHOD [ARG ...]`: each ARG is parsed as JSON (`5`, `true`, `'"5"'`, `'[1,2]'`), anything else is a string |
+| `cc_batch` | `ccctl batch [CALLS \| --file CALLS.json] [--sequential]`: a JSON list as for `cc_batch` (stdin when neither is given); parallel unless `--sequential` |
+| `cc_push` | `ccctl push LOCAL REMOTE [--append]` |
+| `cc_pull` | `ccctl pull REMOTE LOCAL` |
+| *(no MCP tool)* | `ccctl update-bridge`: upload the packaged `bridge.lua`, then print how to restart the bridge |
+
+- `write` uploads like `cc_push` (`bridge_client.push_text`): chunked, so any size works, and an overwrite is atomic
+  through `<path>.part`. It prints the `push` text (`uploaded N chars in K chunk(s); remote size N bytes`).
+- Local paths given to `write --file`, `push` and `pull` are used as typed (relative to the current folder):
+  `CC_MCP_FILES_ROOT` only limits the MCP tools, which act for the model. On the command line you chose the file.
+- `computers`, `call`, `batch`, `network` and the push/pull text come from the same `bridge_client` /
+  `formatting` functions the MCP tools use, so a problem seen through MCP can be reproduced from a shell.
 
 ## The hosted shell and the log tee
 
@@ -105,7 +140,7 @@ the error block. Status, hints, paging instructions, counts, sizes and durations
 - `log`: `last_error_id`, terminal lines (`!` marks red text), and `printError` entries with id and time.
 - `ping`: id, label, clock, day, host and free space. `cancel`: the bridge's reported `cancelled` flag.
 - `computers`: one line per computer with id, label, host and `connected_for_s`, or `No computers connected.`
-  Errors use the shared header and hints. Its CLI exit status remains 0, including on errors.
+  Errors use the shared header and hints; `ccctl computers` then exits 1.
 - `calls` (`cc_call` / `cc_batch`): elapsed time and each requested call's values or error.
   `network` and `calls` fall back to ordinary exec formatting when no matching JSON document is returned.
 - `push`: uploaded chars, chunks and remote byte size. A failed push says how far it got and what is on the
@@ -116,7 +151,8 @@ Known formatters ignore unrelated fields; unknown operations use the header plus
 
 ## File transfer (`cc_push` / `cc_pull`)
 
-Both only touch local folders listed in `CC_MCP_FILES_ROOT`.
+Both only touch local folders listed in `CC_MCP_FILES_ROOT` (`ccctl push` / `pull` / `write --file` use the path
+you type; see above).
 
 - `cc_push` first runs one small `exec` check: it refuses a read-only target, a target that is a directory,
   and an upload whose UTF-8 size exceeds the free space on the target's drive (`fs.getFreeSpace`; an overwrite
