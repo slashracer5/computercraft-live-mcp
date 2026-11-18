@@ -8,6 +8,8 @@ from computercraft_mcp import bridge_client as bc
 from computercraft_mcp import ccctl, mcp_server
 from computercraft_mcp.formatting import format_result
 
+pytestmark = pytest.mark.usefixtures("deterministic_ids")
+
 
 class Stream(io.StringIO):
     def reconfigure(self, **kwargs):
@@ -31,7 +33,7 @@ CLI_CASES = [
 @pytest.mark.parametrize(("argv", "op", "res"), CLI_CASES, ids=[case[1] for case in CLI_CASES])
 @pytest.mark.parametrize("as_json", [False, True])
 @pytest.mark.parametrize("failed", [False, True])
-def test_cli_formatting_and_exit_status(monkeypatch, argv, op, res, as_json, failed):
+def test_cli_formatting_and_exit_status(monkeypatch, argv, op, res, as_json, failed, deterministic_ids):
     if failed:
         res = {"ok": False, "error": {"kind": "not_connected", "message": "offline"}}
     output = Stream()
@@ -54,6 +56,7 @@ def test_cli_formatting_and_exit_status(monkeypatch, argv, op, res, as_json, fai
     status = ccctl.main()
     assert requested == [op]
     assert status == (1 if failed and op != "computers" else 0)
+    deterministic_ids()
     expected = json.dumps(res, indent=2) if as_json else format_result(op, res)
     assert output.getvalue() == expected + "\n"
 
@@ -117,7 +120,8 @@ async def test_invalid_calls_use_formatter_without_relay(monkeypatch, calls):
 
     monkeypatch.setattr(mcp_server, "format_result", formatter)
     assert await mcp_server.cc_batch(calls) == (
-        'ERROR\n  bad_request: each call needs {"peripheral": name, "method": name, "args": [...]}'
+        'ERROR\n  error: bad_request\n<untrusted source="error" id="00000001">\n'
+        'each call needs {"peripheral": name, "method": name, "args": [...]}\n</untrusted id="00000001">'
     )
     assert len(formatted) == 1
     assert formatted[0][0] == "calls"
