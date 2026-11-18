@@ -216,6 +216,9 @@ EVERYTHING = {
     "computers": [{"id": 1, "label": "lbl", "host": "h", "connected_for_s": 1}],
     "chars": 1,
     "chunks": 1,
+    "sent_chars": 1,
+    "remote_state": "unchanged",
+    "part_left": True,
     "bytes": 1,
 }
 DOCS = {
