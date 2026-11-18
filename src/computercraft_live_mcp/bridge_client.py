@@ -2,7 +2,7 @@
 
 Used by ccctl.py (command line) and mcp_server.py (MCP tools), so both send the same requests.
 Env: CC_MCP_URL (default http://127.0.0.1:8765), CC_MCP_API_TOKEN,
-CC_MCP_HOME (default ~/.computercraft-mcp, holds tokens.json).
+CC_MCP_HOME (default ~/.computercraft-live-mcp, holds tokens.json).
 """
 
 import contextlib
@@ -17,7 +17,14 @@ from pathlib import Path
 
 from . import cc_lua
 
-HOME = Path(os.environ.get("CC_MCP_HOME", Path.home() / ".computercraft-mcp"))
+
+def _default_home() -> Path:
+    # Projects installed before the rename keep using their existing folder (and tokens).
+    new, old = Path.home() / ".computercraft-live-mcp", Path.home() / ".computercraft-mcp"
+    return old if old.exists() and not new.exists() else new
+
+
+HOME = Path(os.environ.get("CC_MCP_HOME") or _default_home())
 URL = os.environ.get("CC_MCP_URL", "http://127.0.0.1:8765").rstrip("/")
 BRIDGE_LUA = Path(__file__).parent / "bridge.lua"  # the copy shipped with the package (the relay serves it too)
 

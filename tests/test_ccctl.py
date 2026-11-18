@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from computercraft_mcp import bridge_client as bc
-from computercraft_mcp import cc_lua, ccctl, mcp_server
+from computercraft_live_mcp import bridge_client as bc
+from computercraft_live_mcp import cc_lua, ccctl, mcp_server
 
 pytestmark = pytest.mark.usefixtures("deterministic_ids")
 

@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from computercraft_mcp import formatting
-from computercraft_mcp.formatting import FORMATTERS, format_result
+from computercraft_live_mcp import formatting
+from computercraft_live_mcp.formatting import FORMATTERS, format_result
 
 pytestmark = pytest.mark.usefixtures("deterministic_ids")
 

@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from computercraft_mcp import cc_lua, formatting
+from computercraft_live_mcp import cc_lua, formatting
 
 
 @pytest.mark.parametrize(

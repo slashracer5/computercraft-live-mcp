@@ -2,7 +2,7 @@
   "mcpServers": {
     "computercraft": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/slashracer5/computercraft-mcp", "computercraft-mcp"],
+      "args": ["--from", "git+https://github.com/slashracer5/computercraft-live-mcp", "computercraft-live-mcp"],
       "env": {
         "CC_MCP_URL": "http://127.0.0.1:8765",
         "CC_MCP_FILES_ROOT": "/path/to/the/folder/cc_push/and/cc_pull/may/use"

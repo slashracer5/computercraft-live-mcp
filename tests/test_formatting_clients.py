@@ -4,9 +4,9 @@ import sys
 
 import pytest
 
-from computercraft_mcp import bridge_client as bc
-from computercraft_mcp import ccctl, mcp_server
-from computercraft_mcp.formatting import format_result
+from computercraft_live_mcp import bridge_client as bc
+from computercraft_live_mcp import ccctl, mcp_server
+from computercraft_live_mcp.formatting import format_result
 
 pytestmark = pytest.mark.usefixtures("deterministic_ids")
 

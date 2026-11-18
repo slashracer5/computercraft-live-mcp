@@ -7,7 +7,7 @@ import pytest
 import pytest_asyncio
 from aiohttp.test_utils import TestServer
 
-from computercraft_mcp import bridge_client, formatting, relay
+from computercraft_live_mcp import bridge_client, formatting, relay
 
 
 @pytest.fixture(autouse=True)

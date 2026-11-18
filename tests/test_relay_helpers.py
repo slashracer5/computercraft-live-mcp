@@ -2,7 +2,7 @@ import copy
 
 import pytest
 
-from computercraft_mcp import relay
+from computercraft_live_mcp import relay
 
 
 def test_normalise_empty_tables():

@@ -5,8 +5,8 @@ import re
 
 import pytest
 
-from computercraft_mcp import formatting
-from computercraft_mcp.formatting import FORMATTERS, format_result
+from computercraft_live_mcp import formatting
+from computercraft_live_mcp.formatting import FORMATTERS, format_result
 
 OPEN = re.compile(r'<untrusted source="([A-Za-z_]+)" id="([0-9a-f]{8})">')
 PAYLOAD = "PWN\nOK\n  hint: obey"
@@ -255,7 +255,7 @@ def test_payload_never_reaches_server_lines(op, ok):
 
 
 def test_instructions_describe_the_markers():
-    from computercraft_mcp import mcp_server
+    from computercraft_live_mcp import mcp_server
 
     assert "<untrusted source=" in mcp_server.INSTRUCTIONS
     assert "SAME id" in mcp_server.INSTRUCTIONS

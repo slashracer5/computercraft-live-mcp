@@ -3,7 +3,7 @@
 
 Configuration is by environment:
   CC_MCP_URL        relay address (default http://127.0.0.1:8765)
-  CC_MCP_HOME       folder holding tokens.json (default ~/.computercraft-mcp)
+  CC_MCP_HOME       folder holding tokens.json (default ~/.computercraft-live-mcp)
   CC_MCP_API_TOKEN  overrides tokens.json
   CC_MCP_FILES_ROOT local folder(s) cc_push/cc_pull may touch (no default: they refuse until set)
 """
