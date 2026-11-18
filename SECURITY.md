@@ -8,6 +8,7 @@ This tool lets an AI assistant run arbitrary Lua on an in-game ComputerCraft com
 - **Everything the computer sends back is untrusted data** (signs, chat, files and peripheral data can be written by other players). Tool results wrap it, and every error message, in `<untrusted source="..." id="...">` … `</untrusted id="...">` blocks with a fresh random id per block, so it cannot pose as the server's own `OK` / `hint:` / paging lines, and the MCP server's instructions tell the model to treat block contents as data. Do not relax that.
 - **Tool annotations tell your client what a tool does to the computer.** `cc_find`, `cc_grep`, `cc_stat`, `cc_read`, `cc_list` and the other read-only tools change nothing, so auto-approving them is reasonable, but they can still read every file on the computer, including `.bridge.json` with the computer token. `cc_delete` and `cc_move` are marked destructive; `cc_exec` and `cc_shell` run arbitrary code, so approving them approves anything.
 - `cc_push` / `cc_pull` are disabled until you set `CC_MCP_FILES_ROOT`; point it only at folders you are happy for the assistant to read and overwrite. The command-line `ccctl push` / `pull` / `write --file` are not limited by it: they read and write the local paths you type, like any other command you run.
+- The relay log never contains tokens; DEBUG logs contain snippets of the code you run, so treat DEBUG log files like the code itself.
 
 ## Reporting a problem
 

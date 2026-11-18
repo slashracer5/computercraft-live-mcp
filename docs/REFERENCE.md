@@ -38,6 +38,10 @@ pip install git+https://github.com/slashracer5/computercraft-mcp
 computercraft-mcp-relay --show-tokens          # tokens live in ~/.computercraft-mcp/tokens.json
 computercraft-mcp-relay --host 127.0.0.1 --port 8765
 ```
+Relay logging flags: `--log-level DEBUG|INFO|WARNING|ERROR` (case-insensitive, default `INFO`)
+and `--log-file PATH` (append UTF-8 logs to a file as well as stderr). `--setup` and
+`--show-tokens` still print their output to stdout.
+
 In-game: `wget http://HOST:PORT/bridge.lua bridge.lua`, then `bridge ws://HOST:PORT/ws <computer-token>`.
 For restarts put `shell.run("bridge")` in `startup.lua` (the url/token are saved in `.bridge.json`).
 Update the bridge from the PC: `ccctl update-bridge` (uploads the `bridge.lua` shipped with the installed package to
@@ -82,6 +86,31 @@ raw result instead. Shared flags, before or after the subcommand: `--json`, `--c
   `CC_MCP_FILES_ROOT` only limits the MCP tools, which act for the model. On the command line you chose the file.
 - `computers`, `call`, `batch`, `network` and the push/pull text come from the same `bridge_client` /
   `formatting` functions the MCP tools use, so a problem seen through MCP can be reproduced from a shell.
+
+## Relay log
+
+At INFO, each API call has one summary with computer, operation, request id, time queued for
+the computer's lock, round-trip time, outcome, and encoded request/received websocket response sizes:
+
+```
+#3 exec req=12 queued=0.00s rtt=0.31s outcome=runtime req_bytes=118 resp_bytes=402
+```
+
+Sizes are bytes; `resp_bytes=-` means no reply. Calls rejected before selecting a computer also
+get a summary, with `-` for unavailable fields. Queue time is zero for `ping`, `cancel` and `log`.
+The relay's timeout starts after acquiring the lock; queue time is unbounded and can outlast
+the HTTP caller's timeout. INFO also records connections (id, label, peer address), disconnects
+(duration, close code) and acknowledgements of queued cancels.
+
+WARNING records `relay_timeout` with queue time, requested timeout, relay wait and whether a cancel
+was queued; queued cancels, replaced connections (old and new peer address), oversized requests,
+rejected hellos (peer address and reason), unauthorized API requests, replies that arrive after the
+relay gave up (`answered late`, with how late) and unexpected replies.
+
+Tokens are never logged. INFO and above omit code, commands, file contents and returned values.
+DEBUG adds paths and code/command snippets (up to 200 characters, ASCII-escaped, with the full
+length), and only the length of write data. Treat DEBUG log files like the code itself.
+Third-party warnings and errors share the log; routine aiohttp access logs are suppressed.
 
 ## The hosted shell and the log tee
 
