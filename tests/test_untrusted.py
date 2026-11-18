@@ -200,7 +200,7 @@ EVERYTHING = {
     "eof": False,
     "next_offset": 5,
     "size": 3,
-    "entries": [{"name": "n", "isDir": True}, {"name": "f", "isDir": False, "size": 1}],
+    "entries": [{"name": "n", "path": "n", "isDir": True}, {"name": "f", "path": "f", "isDir": False, "size": 1}],
     "peripherals": [{"name": "p", "types": ["t"], "methods": ["m"], "methods_error": "e"}],
     "lines": ["l"],
     "red": [1],
@@ -220,6 +220,28 @@ EVERYTHING = {
     "remote_state": "unchanged",
     "part_left": True,
     "bytes": 1,
+    # file-system tools (#14)
+    "total": 9,
+    "limit": 1,
+    "matches": [{"path": "p", "line": 1, "text": "t"}],
+    "files": 1,
+    "binary": 1,
+    "unreadable": 1,
+    "stopped": "limit",
+    "rom_skipped": True,
+    "cut": True,
+    "exists": True,
+    "isDir": False,
+    "isReadOnly": True,
+    "drive": "d",
+    "capacity": 1,
+    "created": 1,
+    "modified": 1,
+    "path": "p",  # pull replaces it below
+    "from": "a",
+    "to": "b",
+    "dirs": 1,
+    "existed": False,
 }
 DOCS = {
     "network": {
