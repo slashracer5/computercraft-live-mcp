@@ -21,6 +21,13 @@ HINTS = {
     "use cc_ping to see if it answers at all.",
     "timeout": "The request ran past its timeout and was abandoned on the computer. Raise `timeout`, split the work, "
     "or (for peripheral setters) make sure the game is focused and unpaused.",
+    "no_space": "The computer's drive has too little free space for this upload (an overwrite needs room for the new "
+    "file next to the old one until it is swapped in). Free space (cc_list shows sizes, cc_ping free bytes) or push "
+    "to another drive.",
+    "read_only": "That path is read-only (rom/ or a read-only mount): choose a writable path.",
+    "is_directory": "That path is a directory: give the full file path, e.g. folder/name.lua.",
+    "replace_failed": "The upload arrived but swapping it into place failed; the `sent N of M chars` line says what "
+    "is on the computer now. Check with cc_list before retrying.",
 }
 
 # Error kinds printed as a server line ("  error: runtime"); any other kind goes inside the error block, so a
@@ -30,6 +37,7 @@ KNOWN_KINDS = frozenset(
     "syntax runtime exit timeout terminated cancelled internal busy disconnected bad_request".split()  # bridge
     + "relay_timeout too_large unauthorized no_target not_connected".split()  # relay
     + "relay_unreachable local_file".split()  # client
+    + "no_space read_only is_directory replace_failed".split()  # cc_push checks
 )
 
 
@@ -271,6 +279,15 @@ def _calls(res: dict, *, calls: list[dict] | None = None) -> list[str]:
     return lines + _output(res)
 
 
+# remote_state of a failed push (set by bridge_client.push_text): what is on the computer now
+PUSH_STATES = {
+    "unchanged": "the remote file is unchanged",
+    "append": "append is not atomic: the remote file may end with part of the upload",
+    "unknown": "the final swap was not confirmed: check the remote file before retrying",
+    "part_kept": "the old remote file was deleted and the complete upload is in the .part file next to it",
+}
+
+
 def _push(res: dict) -> list[str]:
     lines = []
     if res.get("ok", True):
@@ -278,6 +295,17 @@ def _push(res: dict) -> list[str]:
             f"uploaded {_number(res.get('chars'))} chars in {_number(res.get('chunks'))} chunk(s); "
             f"remote size {_number(res.get('size'))} bytes"
         )
+    elif "sent_chars" in res:
+        line = (
+            f"sent {_number(res.get('sent_chars'))} of {_number(res.get('chars'))} chars "
+            f"in {_number(res.get('chunks'))} chunk(s)"
+        )
+        state = res.get("remote_state")
+        if isinstance(state, str) and state in PUSH_STATES:
+            line += "; " + PUSH_STATES[state]
+        lines.append(line)
+        if res.get("part_left") is True:
+            lines.append("the temporary .part file may remain; the next push to this path overwrites it")
     return lines + _output(res)
 
 

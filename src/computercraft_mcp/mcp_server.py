@@ -190,6 +190,9 @@ async def cc_batch(calls: list[dict], parallel: bool = True, timeout: float = 30
 @server.tool(annotations=CHANGES)
 async def cc_push(local_path: str, remote_path: str, append: bool = False, computer: int | None = None) -> str:
     """Upload a local UTF-8 text file to the computer, chunked automatically; overwrites unless append=True.
+    An overwrite is atomic: the chunks go to `<remote_path>.part`, which replaces the file only once complete, so a
+    failed push leaves the old file intact. append=True appends directly and is NOT atomic. A full drive, read-only
+    path or directory fails before anything is written.
     Relative local paths are taken from the first folder in CC_MCP_FILES_ROOT; only the folders listed there are
     allowed.
     Use this to deploy programs instead of pasting their source through cc_write."""
@@ -200,7 +203,8 @@ async def cc_push(local_path: str, remote_path: str, append: bool = False, compu
 @server.tool(annotations=CHANGES)
 async def cc_pull(remote_path: str, local_path: str, computer: int | None = None) -> str:
     """Download a computer file (text/CSV/log; large files are paged automatically) into a local folder.
-    Overwrites the local file. Only the folders listed in CC_MCP_FILES_ROOT are allowed."""
+    Overwrites the local file, but only once the whole download arrived (a failed pull leaves it intact).
+    Only the folders listed in CC_MCP_FILES_ROOT are allowed."""
     res = await asyncio.to_thread(bc.pull_file, remote_path, local_path, computer, 30)
     return format_result("pull", res)
 

@@ -73,6 +73,7 @@ The order of steps 1 and 2 doesn't matter; the bridge retries every few seconds.
 | Tools say `relay_unreachable` | The relay isn't running. |
 | `the bridge is already running on this computer` | Normal: only one bridge per computer. Type `exit` first if you want to restart it. |
 | `cc_push` / `cc_pull` refuse | Set `CC_MCP_FILES_ROOT` to an allowed local folder. |
+| A `name.part` file next to a pushed file | A push was cut off before it could clean up; the old file is intact. The next push to that path overwrites it, or delete it. |
 | Requests time out while the game is paused | Setters and main-thread peripheral calls only progress while the game is ticking: keep Minecraft focused. |
 | Computer says `bridge.lua` not found after moving to another world | Computers are per world. Do the computer setup again in that world. |
 | The tools don't show up | Approve the server in your client and restart it. |

@@ -25,6 +25,11 @@ def http_environment(monkeypatch):
     monkeypatch.setenv("no_proxy", "127.0.0.1")
 
 
+def exec_reply(doc: dict) -> dict:
+    """An exec reply whose Lua snippet returned `doc` as JSON."""
+    return {"ok": True, "returns": [json.dumps(json.dumps(doc))]}
+
+
 def unmarked(text: str) -> str:
     """Formatter output without the untrusted-data markers (#18), to check the data inside them."""
     return re.sub(r'<untrusted source="[A-Za-z_]+" id="[0-9a-f]{8}">|</untrusted id="[0-9a-f]{8}">', "", text)
@@ -122,7 +127,10 @@ def test_push_file_chunks_fit_json_limit_and_preserve_text(monkeypatch, files_ro
     calls = []
 
     def call(op, computer, timeout, **kwargs):
-        assert (op, computer, timeout) == ("write", 7, 12)
+        assert (computer, timeout) == (7, 12)
+        if op == "exec":  # cc_push's check before the first chunk and, for an overwrite, the final swap
+            return exec_reply({"ok": True, "size": len(text.encode())})
+        assert op == "write"
         calls.append(kwargs)
         return {"ok": True}
 
@@ -133,7 +141,8 @@ def test_push_file_chunks_fit_json_limit_and_preserve_text(monkeypatch, files_ro
     assert result["chars"] == len(text)
     assert "".join(chunk["data"] for chunk in calls) == text
     assert all(len(json.dumps(chunk["data"])) <= 75000 for chunk in calls)
-    assert all(chunk["path"] == "remote.txt" for chunk in calls)
+    # an overwrite uploads into the .part file that the final swap moves into place
+    assert all(chunk["path"] == ("remote.txt" if append else "remote.txt.part") for chunk in calls)
     assert calls[0].get("append") is (True if append else None)
     assert all(chunk["append"] is True for chunk in calls[1:])
 
@@ -144,6 +153,8 @@ def test_push_file_stops_at_failing_chunk(monkeypatch, files_root):
     error = {"ok": False, "error": {"kind": "runtime", "message": "disk full"}}
 
     def call(op, computer, timeout, **kwargs):
+        if op == "exec":  # the check before the first chunk, then the clean-up of the .part file
+            return exec_reply({"ok": True, "gone": True})
         calls.append(kwargs)
         return {"ok": True} if len(calls) == 1 else error.copy()
 
@@ -151,7 +162,8 @@ def test_push_file_stops_at_failing_chunk(monkeypatch, files_root):
     result = bc.push_file("source.txt", "remote.txt")
     assert result["ok"] is False
     assert result["error"] == error["error"]
-    assert result["chunks"] == len(calls) == 2
+    assert len(calls) == 2
+    assert (result["chunks"], result["sent_chars"]) == (1, len(calls[0]["data"]))  # chunks that arrived
 
 
 def test_push_missing_file_returns_local_error(monkeypatch, files_root):

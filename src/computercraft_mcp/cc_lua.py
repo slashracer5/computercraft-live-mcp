@@ -1,4 +1,4 @@
-"""Lua snippet builders for the higher-level MCP tools (cc_network, cc_call, cc_batch).
+"""Lua snippet builders for the higher-level MCP tools (cc_network, cc_call, cc_batch, cc_push).
 
 They run through the ordinary `exec` op, so the in-game bridge.lua needs no change. Every snippet
 returns ONE JSON string (textutils.serialiseJSON) so the Python side can parse it back.
@@ -100,6 +100,72 @@ def calls_code(calls: list[dict], parallel: bool) -> str:
         args = list(c.get("args") or [])
         packed.append({"p": c["peripheral"], "m": c["method"], "args": args, "n": len(args)})
     return CALLS % {"calls": json_literal(packed), "n": len(packed), "parallel": "true" if parallel else "false"}
+
+
+# ---------------------------------------------------------------------------------- cc_push (atomic upload)
+# An overwriting push writes "<target>.part" chunk by chunk, then swaps it into place with PUSH_FINALISE.
+# `part` is nil for append=True, which writes straight to the target.
+PUSH_PREFLIGHT = r"""
+local target, part, need = %(target)s, %(part)s, %(need)d
+local function done(t) return textutils.serialiseJSON(t) end
+if fs.isReadOnly(target) then return done({ ok = false, reason = "read_only" }) end
+if fs.isDir(target) then return done({ ok = false, reason = "is_directory" }) end
+if part and fs.isDir(part) then return done({ ok = false, reason = "part_is_directory" }) end
+local probe = target -- free space is per drive: ask the nearest folder that exists
+for _ = 1, 64 do
+  if probe == "" or probe == ".." or fs.exists(probe) then break end
+  probe = fs.getDir(probe)
+end
+local okFree, free = pcall(fs.getFreeSpace, probe == ".." and "" or probe)
+if not okFree then free = nil end
+if type(free) == "number" then -- otherwise "unlimited"
+  if part and fs.exists(part) then free = free + fs.getSize(part) end -- a stale .part gets overwritten
+  if free < need then return done({ ok = false, reason = "no_space", free = free, need = need }) end
+end
+return done({ ok = true, free = free })
+"""
+
+PUSH_FINALISE = r"""
+local target, part = %(target)s, %(part)s
+local function done(t) return textutils.serialiseJSON(t) end
+if fs.isDir(target) then return done({ ok = false, reason = "is_directory" }) end
+if not fs.exists(part) or fs.isDir(part) then return done({ ok = false, reason = "part_missing" }) end
+local existed = fs.exists(target)
+if existed then
+  local ok, err = pcall(fs.delete, target)
+  if not ok then return done({ ok = false, reason = "delete_failed", message = tostring(err) }) end
+end
+local ok, err = pcall(fs.move, part, target)
+if not ok then
+  return done({ ok = false, reason = "move_failed", message = tostring(err), target_deleted = existed })
+end
+return done({ ok = true, size = fs.getSize(target) })
+"""
+
+PUSH_DISCARD = r"""
+local part = %(part)s
+if fs.exists(part) and not fs.isDir(part) then pcall(fs.delete, part) end
+return textutils.serialiseJSON({ gone = not fs.exists(part) })
+"""
+
+
+def push_preflight_code(target: str, part: str | None, need: int) -> str:
+    """Refuse read-only or directory targets, and uploads of `need` bytes the target's drive cannot hold."""
+    return PUSH_PREFLIGHT % {
+        "target": json_literal(target),
+        "part": "nil" if part is None else json_literal(part),
+        "need": need,
+    }
+
+
+def push_finalise_code(target: str, part: str) -> str:
+    """Replace `target` with the finished `part` file: delete, then move, in one request."""
+    return PUSH_FINALISE % {"target": json_literal(target), "part": json_literal(part)}
+
+
+def push_discard_code(part: str) -> str:
+    """Delete a leftover `part` file (never a directory)."""
+    return PUSH_DISCARD % {"part": json_literal(part)}
 
 
 def parse_returned_json(res: dict):

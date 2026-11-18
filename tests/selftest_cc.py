@@ -47,6 +47,8 @@ TMP = Path(tempfile.mkdtemp(prefix="ccmcp_cc_"))
 os.environ["CC_MCP_HOME"] = str(TMP / "home")
 os.environ["CC_MCP_URL"] = f"http://127.0.0.1:{PORT}"
 from computercraft_mcp import bridge_client as bc  # noqa: E402  (reads the env vars above at import)
+from computercraft_mcp import cc_lua  # noqa: E402
+from computercraft_mcp.formatting import format_result  # noqa: E402
 
 BRIDGE_LUA = Path(bc.__file__).parent / "bridge.lua"
 
@@ -252,16 +254,41 @@ async def mcp_checks():
         big = ("0123456789" * 15000) + "\n" + "héllo — ünïcode ✓\n" * 50
         src = TMP / "push_src.txt"
         src.write_text(big, encoding="utf-8", newline="")
+        await text("cc_write", {"path": "pushed.txt", "content": "old content"})
         t = await text("cc_push", {"local_path": str(src), "remote_path": "pushed.txt"})
         check(
             "cc_push chunks a 150 KB file",
             t.startswith("OK") and "remote size" in t and "3 chunk" in t.replace("4 chunk", "3 chunk"),
             t,
         )
+        t = await text("cc_exec", {"code": "return fs.exists('pushed.txt.part')"})
+        check("multi-chunk push replaced the file and left no .part", "returns: false" in plain(t), t)
         t = await text("cc_read", {"path": "pushed.txt"})
         check("cc_read shows paging before file data", "[more data: call again with offset=" in t, t[:200])
         t = await text("cc_exec", {"code": "return #fs.open('pushed.txt','rb').readAll()"})
         check("remote size matches", str(len(big.encode("utf-8"))) in t, t + f" want {len(big.encode('utf-8'))}")
+        doc = cc_lua.parse_returned_json(exec_(cc_lua.push_preflight_code("new/dir/x.txt", "new/dir/x.txt.part", 1)))
+        check(
+            "push preflight reads free space for a path that does not exist yet",
+            isinstance(doc, dict) and doc.get("ok") is True and "free" in doc,
+            str(doc),
+        )
+        t = await text("cc_push", {"local_path": str(src), "remote_path": "rom/pushed.txt"})
+        check("cc_push refuses a read-only path up front", "  error: read_only" in t and "chunk(s); the remote" in t, t)
+        await text("cc_exec", {"code": "fs.makeDir('adir')"})
+        t = await text("cc_push", {"local_path": str(src), "remote_path": "adir"})
+        check("cc_push refuses a directory up front", "  error: is_directory" in t and "in 0 chunk(s)" in t, t)
+        shrink = "_G.__realfree = fs.getFreeSpace fs.getFreeSpace = function() return 1000 end return 'shrunk'"
+        await text("cc_exec", {"code": shrink})
+        t = await text("cc_push", {"local_path": str(src), "remote_path": "pushed.txt"})
+        await text("cc_exec", {"code": "fs.getFreeSpace = __realfree return 'restored'"})
+        check(
+            "cc_push refuses an upload the drive cannot hold, before writing",
+            "  error: no_space" in t and "sent 0 of" in t and "the remote file is unchanged" in t,
+            t,
+        )
+        t = await text("cc_exec", {"code": "return fs.getSize('pushed.txt'), fs.exists('pushed.txt.part')"})
+        check("no_space push left the file alone", f"returns: {len(big.encode('utf-8'))}, false" in plain(t), t)
         dst = TMP / "pulled.txt"
         t = await text("cc_pull", {"remote_path": "pushed.txt", "local_path": str(dst)})
         check(
@@ -271,6 +298,50 @@ async def mcp_checks():
         )
         t = await text("cc_push", {"local_path": str(Path(sys.executable)), "remote_path": "no.txt"})
         check("cc_push refuses files outside the allowed folders", "outside the allowed folders" in t, t)
+
+
+def cut_push_checks():
+    """Cutting the connection partway through a push leaves the original remote file untouched (#13)."""
+    os.environ["CC_MCP_FILES_ROOT"] = str(TMP)
+    original = "print('original startup')\n"
+    call("write", path="victim.lua", data=original)
+    src = TMP / "victim_new.lua"
+    new = "-- new version\n" * 10000  # 150 000 chars: three chunks
+    src.write_text(new, encoding="utf-8", newline="")
+    real_call, writes = bc.call, []
+
+    def cutting_call(op, *args, **kw):
+        if op == "write":
+            writes.append(kw.get("path"))
+            if len(writes) == 2:
+                stop("relay")  # the second chunk never arrives, and nothing can clean up afterwards
+        return real_call(op, *args, **kw)
+
+    bc.call = cutting_call
+    try:
+        r = bc.push_file(str(src), "victim.lua")
+    finally:
+        bc.call = real_call
+    check(
+        "push fails when the relay goes away after chunk 1",
+        not r.get("ok") and r["error"]["kind"] == "relay_unreachable" and r["chunks"] == 1 and r["part_left"],
+        str(r),
+    )
+    t = format_result("push", r)
+    check("cut push says the remote file is unchanged", "in 1 chunk(s); the remote file is unchanged" in t, t)
+    start_relay()
+    check("reconnects after the cut", wait_for(lambda: computers(), 40))
+    r = call("read", path="victim.lua")
+    check("cut push left the original remote file untouched", r.get("data") == original, str(r)[:300])
+    r = exec_("return fs.exists('victim.lua.part')")
+    check("cut push left its .part behind", r.get("returns") == ["true"], str(r))
+    r = bc.push_file(str(src), "victim.lua")
+    after = exec_("return fs.getSize('victim.lua'), fs.exists('victim.lua.part')")
+    check(
+        "next push overwrites the stale .part and replaces the file",
+        r.get("ok") and after.get("returns") == [str(len(new)), "false"],
+        f"{r} {after}",
+    )
 
 
 def main():
@@ -336,6 +407,9 @@ def main():
         asyncio.run(mcp_checks())
     except ImportError as e:
         print(f"SKIP MCP checks ({e})")
+
+    # ---- a push whose connection is cut halfway
+    cut_push_checks()
 
     # ---- duplicate-bridge guard
     r = call("shell", command="bridge")
