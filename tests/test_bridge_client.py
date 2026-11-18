@@ -8,6 +8,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer as AiohttpTestServer
 
 from computercraft_mcp import bridge_client as bc
+from computercraft_mcp import formatting
 
 
 @pytest.fixture
@@ -24,38 +25,40 @@ def http_environment(monkeypatch):
 
 
 def test_format_success_result():
-    text = bc.format_result(
-        {"ok": True, "returns": ["42", '"hello"'], "stderr": ["warning"], "output": "hello world", "duration": 1.234}
+    text = formatting.format_result(
+        "exec",
+        {"ok": True, "returns": ["42", '"hello"'], "stderr": ["warning"], "output": "hello world", "duration": 1.234},
     )
-    assert text.splitlines()[0] == "OK"
+    assert text.splitlines()[0] == "OK [1.23s]"
     assert 'returns: 42, "hello"' in text
     assert "stderr:" in text and "warning" in text
     assert "output:" in text and "hello world" in text
-    assert text.endswith("[1.23s]")
 
 
 def test_format_error_result_includes_hint_and_traceback():
-    text = bc.format_result(
+    text = formatting.format_result(
+        "exec",
         {
             "ok": False,
             "error": {"kind": "disconnected", "message": "gone", "traceback": "exec:1\nstack traceback"},
-        }
+        },
     )
     assert text.splitlines()[0] == "ERROR"
     assert "disconnected" in text and "gone" in text
     assert "exec:1" in text and "stack traceback" in text
-    assert bc.HINTS["disconnected"] in text
+    assert formatting.HINTS["disconnected"] in text
 
 
 def test_format_log_marks_red_lines_and_error_id():
-    text = bc.format_result(
+    text = formatting.format_result(
+        "log",
         {
             "ok": True,
             "lines": ["ordinary", "red warning"],
             "red": [2],
             "errors": [{"id": 7, "when": "12:00", "text": "boom"}],
             "last_error_id": 7,
-        }
+        },
     )
     lines = text.splitlines()
     assert "! red warning" in lines
@@ -67,7 +70,7 @@ def test_format_log_marks_red_lines_and_error_id():
 
 @pytest.mark.parametrize("eof", [False, True])
 def test_format_paging_hint_only_before_eof(eof):
-    text = bc.format_result({"ok": True, "data": "page", "next_offset": 123, "eof": eof})
+    text = formatting.format_result("read", {"ok": True, "data": "page", "next_offset": 123, "eof": eof})
     assert ("[more data: call again with offset=123]" in text) is (not eof)
 
 

@@ -16,11 +16,13 @@ MCP client --MCP (computercraft-mcp) / ccctl--> relay <--outbound websocket-- br
 |---|---|
 | `src/computercraft_mcp/bridge.lua` | in-game client. Hosts the computer's shell, records the terminal, answers requests |
 | `src/computercraft_mcp/relay.py` | aiohttp relay: `/ws` (computer), `/api/call` (control), `/bridge.lua` (install), `/healthz` |
-| `src/computercraft_mcp/bridge_client.py` | shared HTTP + result formatting + file-transfer root checks |
+| `src/computercraft_mcp/bridge_client.py` | shared HTTP + file transfer and root checks |
+| `src/computercraft_mcp/formatting.py` | per-operation formatters shared by MCP tools and ccctl; common header and computer-data emission helper |
 | `src/computercraft_mcp/ccctl.py` | command-line client |
 | `src/computercraft_mcp/mcp_server.py` | MCP tools: `cc_exec cc_shell cc_read cc_write cc_list cc_peripherals cc_log cc_cancel cc_ping cc_computers cc_network cc_call cc_batch cc_push cc_pull` |
-| `src/computercraft_mcp/cc_lua.py` | Lua snippet builders + formatters behind `cc_network` / `cc_call` / `cc_batch` (they run through `exec`, so `bridge.lua` is unchanged) |
+| `src/computercraft_mcp/cc_lua.py` | Lua snippet builders and returned-JSON parser for `cc_network` / `cc_call` / `cc_batch` (run through `exec`) |
 | `tests/test_*.py`, `tests/conftest.py` | pytest suite: helpers, the relay with a fake computer (in-process, free ports), file transfer; strict `xfail` tests document #1 and #5 |
+| `tests/test_formatting.py` / `tests/test_formatting_clients.py` | formatter snapshots, error cases and MCP/CLI routing checks |
 | `tests/selftest_cc.py` | end-to-end in headless CraftOS-PC incl. MCP client, reboot, relay restart; run by `tests/test_e2e_craftos.py` (marker `e2e`) or on its own; `CRAFTOS_PC` overrides the emulator path |
 | `.github/workflows/ci.yml` | CI: ruff check / format check, pytest on Python 3.10–3.14 × Linux, Windows, macOS |
 
@@ -59,6 +61,31 @@ Create a file named `.bridge-debug` on the computer to get a connection trace in
 
 Ops: `exec` (persistent session env, `reset` clears), `shell`, `read` (`offset`; `next_offset`, `eof`), `write`
 (`append`), `list`, `peripherals`, `log`, `ping`, `cancel`.
+
+## Text output
+
+`formatting.format_result(op, res, calls=...)` selects an operation from `FORMATTERS`.
+MCP tools and `ccctl` use it for all human-readable results; `ccctl --json` prints the raw result.
+The first line is `OK` or `ERROR`, with duration appended when present (`OK [0.12s]` / `ERROR [1.25s]`).
+Next come any hint, error kind/message/traceback and `stderr`, in that order.
+Job results retain terminal `output:` even on failure, including the `(truncated, tail kept)` note.
+Durations and read paging instructions precede the computer data they describe.
+
+- `exec` / `shell`: return values (`returns: 42`) and captured output.
+- `read`: file data, preceded by `[more data: call again with offset=N]` whenever `eof` is false.
+- `write`: remote size in bytes. `list`: `d name/` for directories, right-aligned byte size then name for files.
+- `peripherals` / `network`: names grouped by type and methods, with methods listed once per group.
+  `network` also includes modem and ship information. Names and methods are sorted within groups.
+  Types retain the computer's reported order, with the primary type first.
+- `log`: `last_error_id`, terminal lines (`!` marks red text), and `printError` entries with id and time.
+- `ping`: id, label, clock, day, host and free space. `cancel`: the bridge's reported `cancelled` flag.
+- `computers`: one line per computer with id, label, host and `connected_for_s`, or `No computers connected.`
+  Errors use the shared header and hints. Its CLI exit status remains 0, including on errors.
+- `calls` (`cc_call` / `cc_batch`): elapsed time and each requested call's values or error.
+  `network` and `calls` fall back to ordinary exec formatting when no matching JSON document is returned.
+- `push`: uploaded chars, chunks and remote byte size. `pull`: saved bytes and local path.
+
+Known formatters ignore unrelated fields; unknown operations use the header plus generic JSON.
 
 ## Known limits
 

@@ -23,6 +23,8 @@ The in-game computer connects *out* to a small relay on your machine, so nothing
 
 Errors come back as data: an `ERROR` line, `error.kind`, message, traceback, hints for known causes and any `printError` output.
 
+`ccctl` prints the same text as the MCP tools; add `--json` for the raw result.
+
 ## Quick start
 
 ```
