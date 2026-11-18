@@ -48,7 +48,8 @@ Working with peripherals:
   physical test and a sensor before relying on it.
 - Upload programs with cc_push (do not paste big files through cc_write); fetch logs with cc_pull.
   Both only work for local folders the user listed in CC_MCP_FILES_ROOT.
-- cc_exec results are JSON-ish text; objects with metatables (e.g. matrices) lose their fields in JSON.
+- cc_exec return values are Lua-serialised (textutils.serialise); a table holding functions shows as `table: ...`.
+  cc_call/cc_batch values come back as JSON. Neither shows fields reached through a metatable: return what you need.
 """
 
 server = MCPServer("computercraft", instructions=INSTRUCTIONS + cc_lua.profile_instructions())
@@ -96,10 +97,10 @@ async def cc_exec(
 
 @server.tool(annotations=CHANGES)
 async def cc_shell(command: str, timeout: float = DEFAULT_TIMEOUT, computer: int | str | None = None) -> str:
-    """Run a shell command or program (`ls`, `edit`-less programs, `myprogram arg`) and return its output.
+    """Run any shell command or program with arguments (`ls`, `myprogram arg`) and return its output.
 
     A failing program returns ERROR with the message and its printError output in `stderr`.
-    Interactive programs that wait for keys will time out.
+    Programs waiting for keyboard input (`edit`, the interactive `lua` prompt, `read()`) time out.
     """
     return await _call("shell", computer, timeout, command=command)
 
@@ -112,9 +113,9 @@ async def cc_read(path: str, offset: int = 0, computer: int | str | None = None)
 
 @server.tool(annotations=CHANGES)
 async def cc_write(path: str, content: str, append: bool = False, computer: int | str | None = None) -> str:
-    """Write (or append to) a file on the computer. Text is sent as UTF-8. Keep each call under ~100 KB
-    (non-ASCII characters count ~6 bytes each); for larger files use append=True or cc_push.
-    Overwrites without asking."""
+    """Write (or append to) a file on the computer. Text is sent as UTF-8. Overwrites without asking.
+    The relay refuses requests over 100,000 bytes once JSON-encoded (error too_large), path included: each non-ASCII
+    character counts up to 6 bytes, a newline 2. Use cc_push for big files (or append=True in a few pieces)."""
     return await _call("write", computer, DEFAULT_TIMEOUT, path=path, data=content, append=append or None)
 
 
@@ -136,8 +137,8 @@ async def cc_log(
 ) -> str:
     """Show the computer's terminal history and unattended-error log.
 
-    `lines` of recent terminal text (lines marked `!` were red), plus every printError message with an
-    id. This is how errors from programs started by hand (or by other code), not through these tools, show up.
+    `lines` of recent terminal text, capped at 300 (lines marked `!` were red), plus printError messages with
+    ids (last 200 kept, independent of `lines`). Errors from programs started by hand or other code show up here.
     Pass since_error=<last_error_id from the previous call> to see only new errors; errors_only=True
     skips the terminal text.
     """

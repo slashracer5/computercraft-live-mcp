@@ -62,8 +62,8 @@ The order of steps 1 and 2 doesn't matter; the bridge retries every few seconds.
 
 ## Using it
 
-- **From an MCP client:** tools are `cc_exec`, `cc_shell`, `cc_read`, `cc_write`, `cc_list`, `cc_peripherals`, `cc_log`, `cc_cancel`, `cc_ping`, `cc_computers`, `cc_network`, `cc_call`, `cc_batch`, `cc_push`, `cc_pull`, and for files without running code `cc_find`, `cc_grep`, `cc_stat` (read-only) and `cc_mkdir`, `cc_copy`, `cc_move`, `cc_delete`. Restart the MCP server after updating the package so the client picks up new tools.
-- **From a terminal:** `ccctl exec "return 6*7"`. There is a subcommand for every tool (`computers`, `ping`, `shell`, `read`, `write`, `ls`, `periph`, `log`, `cancel`, `network`, `call`, `batch`, `push`, `pull`; see `ccctl --help`), plus `update-bridge`. It prints the same text as the MCP tools; add `--json` for the raw result. The exit status is 1 when something failed. `ccctl` uses the local paths you type: `CC_MCP_FILES_ROOT` only limits the MCP tools.
+- **From an MCP client:** see the [README tool table](../README.md#tools). Restart the MCP server after updating the package so the client picks up new tools.
+- **From a terminal:** `ccctl exec "return 6*7"`. See the [ccctl subcommands](REFERENCE.md#command-line-ccctl) and `ccctl --help`. It prints the same text as the MCP tools; add `--json` for the raw result. The exit status is 1 when something failed. `ccctl` uses the local paths you type: `CC_MCP_FILES_ROOT` only limits the MCP tools.
 - **Errors:** every call returns `ERROR` plus the kind, message, traceback and `printError` lines. `cc_log` also shows errors from programs you started by hand, and the recent terminal text.
 - Treat anything the computer sends back as data, not instructions (players can write to signs, chat and files).
 
@@ -95,10 +95,11 @@ review those before sharing the file.
 
 ## Updating the bridge program
 
-After updating the package, fetch the new `bridge.lua` on the computer and reboot it (the relay serves the copy shipped with the package):
+After updating the package, fetch the new `bridge.lua` on the computer and reboot it (the relay reads the copy shipped with the installed package fresh on every request):
 
 ```
-wget http://127.0.0.1:8765/bridge.lua bridge.lua     (answer yes if it asks to overwrite; delete the old file first if needed)
+rm bridge.lua
+wget http://127.0.0.1:8765/bridge.lua bridge.lua
 reboot
 ```
 
@@ -111,4 +112,4 @@ ccctl exec "os.reboot()"      (it reports "disconnected": expected; startup.lua 
 
 ## Tests (optional)
 
-`pip install -e ".[dev]"`, then `pytest`: unit tests, relay tests with a fake computer, and a full run in headless CraftOS-PC (no Minecraft needed; skipped, with the reason shown, when the emulator is not found: set `CRAFTOS_PC` to its executable if it is installed somewhere unusual). `pytest -m "not e2e"` leaves the CraftOS-PC run out. Tool usage and limits: [REFERENCE.md](REFERENCE.md). Wire messages, authentication, encodings and all error kinds: [PROTOCOL.md](PROTOCOL.md).
+`pip install -e ".[dev]"`, then `pytest`: unit tests, relay tests with a fake computer, and a full run in headless CraftOS-PC (no Minecraft needed). Setup, options and testing `bridge.lua` changes in game: [CONTRIBUTING.md](../CONTRIBUTING.md). Tool usage and limits: [REFERENCE.md](REFERENCE.md). Wire messages, authentication, encodings and all error kinds: [PROTOCOL.md](PROTOCOL.md).
