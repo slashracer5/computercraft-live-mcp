@@ -15,7 +15,7 @@ from computercraft_mcp.config import reset_config
 def isolated_home(monkeypatch, tmp_path):
     # The package reads its environment once (config.get_config); reset it around every test.
     monkeypatch.setenv("CC_MCP_HOME", str(tmp_path / "home"))
-    for name in ("CC_MCP_URL", "CC_MCP_API_TOKEN", "CC_MCP_COMPUTER_TOKEN"):
+    for name in ("CC_MCP_URL", "CC_MCP_API_TOKEN", "CC_MCP_COMPUTER_TOKEN", "CC_MCP_PROFILE"):
         monkeypatch.delenv(name, raising=False)
     reset_config()
     yield

@@ -2,6 +2,7 @@
 
 CC_MCP_HOME holds tokens.json; CC_MCP_URL selects the relay. CC_MCP_API_TOKEN and
 CC_MCP_COMPUTER_TOKEN override the API token and the shared (deprecated) computer token.
+CC_MCP_PROFILE is a comma list of opt-in mod profiles (see cc_lua.PROFILES).
 Token files are handled by the relay/client.
 CC_MCP_FILES_ROOT is read separately per file-transfer call in bridge_client.py.
 """
@@ -20,6 +21,7 @@ class Config:
     url: str
     api_token: str | None = field(repr=False)
     computer_token: str | None = field(repr=False)
+    profiles: tuple[str, ...] = ()
 
     @property
     def tokens_file(self) -> Path:
@@ -34,7 +36,13 @@ def get_config() -> Config:
         url=os.environ.get("CC_MCP_URL", f"http://127.0.0.1:{DEFAULT_PORT}").rstrip("/"),
         api_token=os.environ.get("CC_MCP_API_TOKEN"),
         computer_token=os.environ.get("CC_MCP_COMPUTER_TOKEN"),
+        profiles=_names(os.environ.get("CC_MCP_PROFILE", "")),
     )
+
+
+def _names(value: str) -> tuple[str, ...]:
+    """'Sable, foo,,sable' -> ('sable', 'foo'): lower-cased, blanks and repeats dropped, order kept."""
+    return tuple(dict.fromkeys(name.strip().lower() for name in value.split(",") if name.strip()))
 
 
 def reset_config() -> None:

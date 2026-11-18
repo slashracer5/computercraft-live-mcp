@@ -155,10 +155,15 @@ async def mcp_checks():
     """Drive the MCP server through a real MCP client over stdio."""
     from mcp import Client, StdioServerParameters
 
-    params = StdioServerParameters(
-        command=sys.executable, args=["-m", "computercraft_mcp.mcp_server"], env=dict(os.environ), cwd=str(HERE)
-    )
-    async with Client(params) as client:
+    def server_params(profile=None):
+        env = {k: v for k, v in os.environ.items() if k != "CC_MCP_PROFILE"}
+        if profile:
+            env["CC_MCP_PROFILE"] = profile
+        return StdioServerParameters(
+            command=sys.executable, args=["-m", "computercraft_mcp.mcp_server"], env=env, cwd=str(HERE)
+        )
+
+    async with Client(server_params()) as client:
         names = {t.name for t in (await client.list_tools()).tools}
         want = {
             "cc_computers",
@@ -273,6 +278,30 @@ async def mcp_checks():
         )
         t = await text("cc_batch", {"calls": [{"peripheral": "dev_a"}]})
         check("cc_batch validates calls", "bad_request" in t, t)
+
+        # ---- mod profiles: the sable probe only runs when CC_MCP_PROFILE enables it ------------------
+        mod_words = re.compile(r"\bsable\b|avionics|actuator|sublevel|\bship|on_ship|ship_mass", re.IGNORECASE)
+        fake_sublevel = (
+            "_G.sublevel = {isInPlotGrid = function() return true end, getMass = function() return 1234.5 end} "
+            "return 'sublevel faked'"
+        )
+        t = await text("cc_exec", {"code": fake_sublevel})
+        check("fake sublevel API installed", "sublevel faked" in t, t)
+        t = await text("cc_network", {})
+        check("cc_network without a profile is mod-independent", "2 peripherals\n" in t and not mod_words.search(t), t)
+        check("instructions without a profile are mod-independent", not mod_words.search(client.instructions or ""))
+        async with Client(server_params("sable")) as sable:
+            r = await sable.call_tool("cc_network", {})
+            t = "".join(getattr(c, "text", "") for c in r.content)
+            check(
+                "cc_network with the sable profile reports on_ship and ship_mass",
+                "2 peripherals (on_ship=true, ship_mass=1234.5)" in t and "derive from the bow" in t,
+                t,
+            )
+            check("sable profile adds its instructions", 'Profile "sable"' in (sable.instructions or ""))
+        t = await text("cc_exec", {"code": "_G.sublevel = nil return 'sublevel removed'"})
+        check("fake sublevel API removed", "sublevel removed" in t, t)
+
         t = await text("cc_exec", {"code": RESTORE_PERIPHERALS})
         check("fake peripherals removed", "restored" in t, t)
 

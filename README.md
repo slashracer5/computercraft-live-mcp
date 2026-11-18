@@ -56,8 +56,27 @@ Full walkthrough, troubleshooting and the protocol reference: [docs/QUICKSTART.m
 | `CC_MCP_HOME` | `~/.computercraft-mcp` | folder holding `tokens.json` (created on first run) |
 | `CC_MCP_API_TOKEN` / `CC_MCP_COMPUTER_TOKEN` | from `tokens.json` | override the API token / the shared computer token (deprecated); never saved |
 | `CC_MCP_FILES_ROOT` | *(unset: push/pull refuse)* | local folder(s) `cc_push` / `cc_pull` may touch, separated by `;` on Windows and `:` elsewhere (`ccctl` uses the paths you type) |
+| `CC_MCP_PROFILE` | *(unset: none)* | opt-in mod profiles, comma-separated, e.g. `sable` (see [Mod profiles](#mod-profiles)) |
 
 Message sizes and timeouts are defined in [src/computercraft_mcp/limits.py](src/computercraft_mcp/limits.py); see [Known limits](docs/REFERENCE.md#known-limits).
+
+## Mod profiles
+
+The tools, their output and the instructions the model gets work with any CC:Tweaked setup and name no mod.
+Mod-specific extras are opt-in: set `CC_MCP_PROFILE` in the MCP server's environment and restart it.
+Unknown names are ignored with a warning on stderr.
+
+| profile | for | adds |
+|---|---|---|
+| `sable` | Sable ships with Create Avionics peripherals | `on_ship` and `ship_mass` in `cc_network`; instructions about `ship_*` zone names and actuator signs |
+
+With `sable`, `cc_network`'s peripheral count line reads e.g. `12 peripherals (on_ship=true, ship_mass=1234.5)`:
+
+- `on_ship`: what Sable's `sublevel.isInPlotGrid()` returns on the computer, i.e. whether the computer is on a Sable ship.
+- `ship_mass`: `sublevel.getMass()`, the ship's mass as Sable reports it.
+
+Each is left out when the computer has no `sublevel` API (Sable not installed). The `ship_*` peripherals
+themselves show up in `cc_network` like any other peripheral, with or without the profile.
 
 ## Security
 
