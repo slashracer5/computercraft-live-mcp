@@ -34,7 +34,7 @@ def api_token() -> str:
     config = get_config()
     if config.api_token:
         return config.api_token
-    return json.loads((config.home / "tokens.json").read_text())["api"]
+    return json.loads(config.tokens_file.read_text())["api"]
 
 
 def request(path: str, body: dict | None = None) -> dict:

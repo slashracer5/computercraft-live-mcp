@@ -11,7 +11,11 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from computercraft_mcp import relay
 
-TOKENS = {"api": "API-TOKEN-SECRET-1", "computer": "COMPUTER-TOKEN-SECRET-2"}
+TOKENS = {
+    "api": "API-TOKEN-SECRET-1",
+    "computer": "COMPUTER-TOKEN-SECRET-2",
+    "computers": {"4": "PER-COMPUTER-TOKEN-SECRET-4"},
+}
 HEADERS = {"Authorization": "Bearer " + TOKENS["api"]}
 
 
@@ -21,7 +25,7 @@ def capture_logs(caplog):
     yield
     formatter = logging.Formatter(relay.LOG_FORMAT)
     for record in caplog.get_records("call"):
-        for token in TOKENS.values():
+        for token in relay.secret_values(TOKENS):
             assert token not in record.getMessage()
             assert token not in formatter.format(record)
 
@@ -167,7 +171,7 @@ async def test_lock_free_timeout_does_not_queue_cancel(caplog, monkeypatch):
 async def test_debug_redaction_truncation_and_oversize(caplog, field, op):
     async with relay_client() as client:
         ws = await connect(client)
-        code = "return '" + " ".join(TOKENS.values()) + "' " + "x" * 250
+        code = "return '" + " ".join(relay.secret_values(TOKENS)) + "' " + "x" * 250
         task = asyncio.create_task(call(client, {"op": op, field: code, "timeout": 1}))
         request = await ws.receive_json(timeout=1)
         assert request[field] == code
@@ -212,7 +216,9 @@ async def test_untrusted_protocol_names_are_not_logged(caplog):
         (json.dumps({"type": "wrong", "id": 3, "token": TOKENS["api"]}), "not a hello"),
         (json.dumps({"type": "hello", "id": 3, "token": "WRONG-TOKEN-SECRET"}), "wrong token"),
         (json.dumps({"type": "hello", "id": 3, "token": TOKENS["api"]}), "wrong token"),
-        (json.dumps({"type": "hello", "id": TOKENS["api"], "token": "wrong"}), "wrong token"),
+        (json.dumps({"type": "hello", "id": TOKENS["api"], "token": "wrong"}), "bad id"),
+        (json.dumps({"type": "hello", "id": 3, "token": TOKENS["computers"]["4"]}), "token not valid for this id"),
+        (json.dumps({"type": "hello", "id": 4, "token": TOKENS["computer"]}), "shared token not valid for this id"),
     ],
 )
 async def test_rejected_hello(caplog, hello, reason):
@@ -322,7 +328,7 @@ async def test_reply_ids_match_like_before():
 async def test_nested_per_computer_tokens_are_redacted(caplog):
     # tokens.json may grow nested per-computer tokens; they must be redacted too, without crashing.
     tokens = {**TOKENS, "computers": {"3": "PER-COMPUTER-SECRET-3"}}
-    assert set(relay.secret_values(tokens)) == {*TOKENS.values(), "PER-COMPUTER-SECRET-3"}
+    assert set(relay.secret_values(tokens)) == {TOKENS["api"], TOKENS["computer"], "PER-COMPUTER-SECRET-3"}
     ws = AsyncMock()
     conn = relay.Conn(ws, {"id": 3}, tokens=tokens)
 

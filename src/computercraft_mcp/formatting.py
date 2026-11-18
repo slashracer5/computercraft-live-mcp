@@ -260,6 +260,11 @@ def _computers(res: dict) -> list[str]:
     for computer in _records(res.get("computers")):
         fields = [f"{key}={computer.get(key)}" for key in ("id", "label", "host")]
         fields.append(f"connected_for_s={_number(computer.get('connected_for_s'))}")
+        # the relay's view of the connection (#17): peer address, how it authenticated, takeovers of this id
+        fields += [f"{key}={computer[key]}" for key in ("remote", "auth", "replacements") if key in computer]
+        if computer.get("previous_remote") is not None or computer.get("last_replaced_s_ago") is not None:
+            fields.append(f"last_replaced_s_ago={_number(computer.get('last_replaced_s_ago'))}")
+            fields.append(f"previous_remote={computer.get('previous_remote')}")
         lines.append(", ".join(fields))
     return [_untrusted("\n".join(lines), "computers")] if lines else ["No computers connected."]
 

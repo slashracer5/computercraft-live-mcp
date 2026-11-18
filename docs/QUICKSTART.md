@@ -24,19 +24,19 @@ MCP client --(MCP tools)--> relay (your PC)  <--(outbound websocket)--  computer
    The config is read when a world loads, so restart the world after editing. Modpack updates can overwrite the file; redo this step if `wget` says "Domain not permitted" afterwards.
    **Never put this rule on a multiplayer server you do not own.**
 
-3. **Tokens** are created on first run in `~/.computercraft-mcp/tokens.json` (two secrets: one for the in-game computer, one for the control API). Don't share them.
+3. **Tokens** live in `~/.computercraft-mcp/tokens.json`: one for the control API, created on first run, and one per in-game computer, created when you set that computer up. Don't share them. On Windows keep this folder in your user profile (the default).
 
 4. **Register the MCP server** with your client. For Claude Code, copy `examples/mcp.json.example` to `.mcp.json` in your project, set `CC_MCP_FILES_ROOT` to the folder you want `cc_push` / `cc_pull` to use, and approve the server (`/mcp`). With a pip install, use `"command": "computercraft-mcp"` and no args.
 
 ## Setting up a computer (once per computer)
 
-Run:
+On the in-game computer, type `id` to see its id (say `3`). Then run, on your PC:
 
 ```
-computercraft-mcp-relay --setup
+computercraft-mcp-relay --setup --computer 3
 ```
 
-It prints, to type on the in-game computer:
+It gives computer #3 its own token (or reuses the one it already has) and prints, to type on that computer:
 
 ```
 wget http://127.0.0.1:8765/bridge.lua bridge.lua
@@ -44,7 +44,13 @@ bridge ws://127.0.0.1:8765/ws <token>
 edit startup          <- type one line:  shell.run("bridge")   then save and exit (autostart)
 ```
 
+The token only works for computer #3, so a copy of it on another computer is refused. A running relay picks up new tokens by itself.
+
 The computer's shell keeps working normally while the bridge runs. Type `exit` to stop it. Each computer connects separately (tools take an optional `computer` id).
+
+**Set up before per-computer tokens?** Computers that still use the old shared token keep working for now, but the relay log warns about it. Run `--setup --computer <id>` for each one, type `exit` on that computer, then the new `bridge ws://... <token>` line.
+
+**New tokens:** `computercraft-mcp-relay --rotate computer --computer 3` replaces computer #3's token (`--rotate computer` replaces every computer token, `--rotate api` the API token, `--rotate all` both) and prints what to type where. Don't delete `tokens.json` for this.
 
 ## Every time you want to use it
 
@@ -68,7 +74,7 @@ The order of steps 1 and 2 doesn't matter; the bridge retries every few seconds.
 | `wget`: **Domain not permitted** | The allow rule is missing, in the wrong config, or the world wasn't reloaded after editing. |
 | `wget`: Could not connect / Connection refused | The relay isn't running. |
 | Screen shows `connect failed ... (retrying)` | Same: relay not running (or wrong address/port). It keeps retrying by itself. |
-| Screen shows `handshake rejected (wrong token?)` | Token mismatch (for example `tokens.json` was deleted). Re-run `computercraft-mcp-relay --setup`, then `bridge ws://... <token>` again. |
+| Screen shows `handshake rejected (wrong token?)` | The relay log's `rejected hello` line says why: the token belongs to another computer id, was replaced (`--rotate`), or `tokens.json` was deleted. Run `computercraft-mcp-relay --setup --computer <id>` (`id` on the computer shows it), type `exit` on the computer, then the printed `bridge ws://... <token>` line. |
 | Tools say `no_target` / `not_connected` | No computer is connected. Check the relay says `computer #N connected`, that the world is open and the computer's chunk is loaded. |
 | Tools say `relay_unreachable` | The relay isn't running. |
 | `the bridge is already running on this computer` | Normal: only one bridge per computer. Type `exit` first if you want to restart it. |

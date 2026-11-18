@@ -1,7 +1,8 @@
 """Shared environment configuration, read on first use.
 
 CC_MCP_HOME holds tokens.json; CC_MCP_URL selects the relay. CC_MCP_API_TOKEN and
-CC_MCP_COMPUTER_TOKEN override tokens. Token files are handled by the relay/client.
+CC_MCP_COMPUTER_TOKEN override the API token and the shared (deprecated) computer token.
+Token files are handled by the relay/client.
 CC_MCP_FILES_ROOT is read separately per file-transfer call in bridge_client.py.
 """
 
@@ -19,6 +20,10 @@ class Config:
     url: str
     api_token: str | None = field(repr=False)
     computer_token: str | None = field(repr=False)
+
+    @property
+    def tokens_file(self) -> Path:
+        return self.home / "tokens.json"
 
 
 @lru_cache(maxsize=1)
