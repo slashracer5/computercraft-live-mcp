@@ -2,10 +2,15 @@
 
 They run through the ordinary `exec` op, so the in-game bridge.lua needs no change. Every snippet
 returns ONE JSON string (textutils.serialiseJSON) so the Python side can parse it back.
+Mod-specific probes, output and instructions live in opt-in profiles (PROFILES, CC_MCP_PROFILE).
 """
 
 import json
+import sys
+from collections.abc import Iterable
+from dataclasses import dataclass
 
+from .config import get_config
 from .limits import FS_REPLY_LIMIT
 
 
@@ -26,16 +31,83 @@ def json_literal(obj) -> str:
     return f"textutils.unserialiseJSON({long_string(json.dumps(obj, ensure_ascii=True))})"
 
 
+# ---------------------------------------------------------------------------------- mod profiles
+@dataclass(frozen=True)
+class Profile:
+    """Opt-in, mod-specific extras, enabled by name in CC_MCP_PROFILE. Without a profile the tools, their
+    output and the server instructions stay independent of any mod."""
+
+    name: str
+    network_probe: str = ""  # Lua run at the end of cc_network (in its own block); may set fields on `out`
+    network_fields: tuple[str, ...] = ()  # those fields, shown on cc_network's first line when present
+    network_notes: tuple[str, ...] = ()  # lines added to the end of cc_network's output
+    instructions: str = ""  # appended to the MCP server instructions
+
+
+SABLE = Profile(
+    name="sable",
+    network_probe="""
+local ok_ship, on_ship = pcall(function() return sublevel.isInPlotGrid() end)
+if ok_ship then out.on_ship = on_ship end
+local ok_mass, mass = pcall(function() return sublevel.getMass() end)
+if ok_mass then out.ship_mass = mass end
+""",
+    network_fields=("on_ship", "ship_mass"),
+    network_notes=("ship_* zone names derive from the bow, so rebuilding the ship can rename them.",),
+    instructions="""\
+Profile "sable" (Sable ships with Create Avionics peripherals):
+- cc_network also reports on_ship (whether this computer is on a Sable ship) and ship_mass (the
+  ship's mass as Sable reports it); each is left out when the computer has no `sublevel` API.
+- `ship_*` peripheral zone names derive from the bow: find them by prefix at run time.
+- Do not trust the documentation for actuator signs or frames: verify them with a one-variable
+  physical test and a sensor before relying on them.
+""",
+)
+
+PROFILES = {p.name: p for p in (SABLE,)}
+_warned: set[str] = set()
+
+
+def active_profiles() -> tuple[Profile, ...]:
+    """The profiles named in CC_MCP_PROFILE, in order. Unknown names are skipped with a warning on stderr."""
+    found = []
+    for name in get_config().profiles:
+        if name in PROFILES:
+            found.append(PROFILES[name])
+        elif name not in _warned:
+            _warned.add(name)
+            known = ", ".join(sorted(PROFILES))
+            print(
+                f"computercraft-live-mcp: ignoring unknown CC_MCP_PROFILE entry {name!r} (known: {known})",
+                file=sys.stderr,
+            )
+    return tuple(found)
+
+
+def profile_instructions(profiles: Iterable[Profile] | None = None) -> str:
+    """Server instructions added by `profiles` (default: those enabled), or "" for none."""
+    profiles = active_profiles() if profiles is None else profiles
+    return "".join("\n" + p.instructions for p in profiles if p.instructions)
+
+
+def network_extras(doc: dict, profiles: Iterable[Profile] | None = None) -> tuple[list[tuple[str, object]], list[str]]:
+    """What `profiles` (default: those enabled) add to cc_network's output: the (field, value) pairs present
+    in `doc` for its first line, and note lines for its end."""
+    profiles = active_profiles() if profiles is None else profiles
+    fields: list[tuple[str, object]] = []
+    notes: list[str] = []
+    for p in profiles:
+        fields += [(key, doc[key]) for key in p.network_fields if key in doc]
+        notes += p.network_notes
+    return fields, notes
+
+
 # ---------------------------------------------------------------------------------- cc_network
 NETWORK = r"""
 local want_methods = %(methods)s
 local names = peripheral.getNames()
 table.sort(names)
 local out = { devices = {}, modems = {}, local_names = {} }
-local ok_ship, on_ship = pcall(function() return sublevel.isInPlotGrid() end)
-if ok_ship then out.on_ship = on_ship end
-local ok_mass, mass = pcall(function() return sublevel.getMass() end)
-if ok_mass then out.ship_mass = mass end
 for _, n in ipairs(names) do
   local okT, types = pcall(function() return { peripheral.getType(n) } end)
   local entry = { name = n, types = okT and types or { "?" } }
@@ -54,12 +126,15 @@ for _, n in ipairs(names) do
     end
   end
 end
-return textutils.serialiseJSON(out)
+%(probes)sreturn textutils.serialiseJSON(out)
 """
 
 
-def network_code(methods: bool) -> str:
-    return NETWORK % {"methods": "true" if methods else "false"}
+def network_code(methods: bool, profiles: Iterable[Profile] | None = None) -> str:
+    """The cc_network snippet plus the probes of `profiles` (default: those enabled in CC_MCP_PROFILE)."""
+    profiles = active_profiles() if profiles is None else profiles
+    probes = "".join(f"do\n{p.network_probe.strip()}\nend\n" for p in profiles if p.network_probe)
+    return NETWORK % {"methods": "true" if methods else "false", "probes": probes}
 
 
 # ---------------------------------------------------------------------------------- cc_call / cc_batch

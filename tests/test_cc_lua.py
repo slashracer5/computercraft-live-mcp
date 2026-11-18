@@ -111,8 +111,7 @@ def test_format_network_groups_devices():
     }
     text = formatting.format_result("network", exec_reply(doc))
     assert "2 peripherals" in text
-    assert "on_ship=true" in text
-    assert "ship_mass=123" in text
+    assert "on_ship" not in text and "ship_mass" not in text  # shown only with CC_MCP_PROFILE=sable (#23)
     assert "computer_7" in text
     assert "type widget  x2" in text
     assert "dev_a, dev_b" in text

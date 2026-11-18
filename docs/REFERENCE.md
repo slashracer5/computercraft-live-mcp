@@ -22,7 +22,7 @@ MCP client --MCP (computercraft-live-mcp) / ccctl--> relay <--outbound websocket
 | `src/computercraft_live_mcp/limits.py` | message sizes, push chunk budgets, the file-system tools' reply limit and timeout defaults; tests check Lua copies |
 | `src/computercraft_live_mcp/ccctl.py` | command-line client: one subcommand per MCP tool, plus `update-bridge` |
 | `src/computercraft_live_mcp/mcp_server.py` | MCP tools: `cc_exec cc_shell cc_read cc_write cc_list cc_peripherals cc_log cc_cancel cc_ping cc_computers cc_network cc_call cc_batch cc_push cc_pull cc_find cc_grep cc_stat cc_delete cc_move cc_copy cc_mkdir` |
-| `src/computercraft_live_mcp/cc_lua.py` | Lua snippet builders and returned-JSON parser for `cc_network` / `cc_call` / `cc_batch`, the `cc_push` check/swap steps and the file-system tools (run through `exec`) |
+| `src/computercraft_live_mcp/cc_lua.py` | Lua snippet builders and returned-JSON parser for `cc_network` / `cc_call` / `cc_batch`, the `cc_push` check/swap steps and the file-system tools (run through `exec`); opt-in mod profiles |
 | `tests/test_*.py`, `tests/conftest.py` | pytest suite: helpers, the relay with a fake computer (in-process, free ports), file transfer; strict `xfail` tests document #1 and #5 |
 | `tests/test_formatting.py` / `tests/test_formatting_clients.py` | formatter snapshots, error cases and MCP/CLI routing checks |
 | `tests/test_atomic_transfer.py` | `cc_push` / `cc_pull` atomicity against a fake computer (failed chunks, preflight refusals, local replace) |
@@ -149,6 +149,21 @@ DEBUG adds paths and code/command snippets (up to 200 characters, ASCII-escaped,
 length), and only the length of write data. Treat DEBUG log files like the code itself.
 Third-party warnings and errors share the log; routine aiohttp access logs are suppressed.
 
+## Mod profiles
+
+`CC_MCP_PROFILE` (comma-separated, case-insensitive, read once when the MCP server starts) enables entries of
+`cc_lua.PROFILES`; unknown names are skipped with a warning on stderr. Without a profile no tool description,
+output or instruction names a mod. A `Profile` can add:
+
+- `network_probe`: Lua appended to `cc_network`'s snippet in its own `do ... end` block, after the inventory;
+  it may set fields on `out` (wrap mod API calls in `pcall`, the API may be missing);
+- `network_fields`: those fields, shown on `cc_network`'s peripheral count line when present (booleans and
+  numbers as they are, any other value in an `<untrusted>` block named after the field);
+- `network_notes`: lines added to the end of `cc_network`'s output (not `cc_peripherals`');
+- `instructions`: text appended to the MCP server instructions.
+
+`sable` probes `sublevel.isInPlotGrid()` (`on_ship`) and `sublevel.getMass()` (`ship_mass`); see the README.
+
 ## The hosted shell and the log tee
 
 `bridge` runs a normal shell inside itself, so players keep using the computer. Everything drawn on the
@@ -197,7 +212,7 @@ Every block gets a fresh random 8-hex-digit id that does not occur in its conten
 close the block early. A one-line value inside a server line uses the same markers on that line
 (`returns: <untrusted source="returns" id="…">42</untrusted id="…">`). `source` is a fixed word chosen by
 the formatter (`file`, `output`, `returns`, `stderr`, `error`, `listing`, `terminal`, `printError`,
-`peripherals`, `on_ship`, `computers`, `ping`, `call`, `call_error`, `result`, `paths`, `matches`, `path`, `drive`).
+`peripherals`, a profile field's name such as `on_ship`, `computers`, `ping`, `call`, `call_error`, `result`, `paths`, `matches`, `path`, `drive`).
 Wrapped: file data, terminal output, return values, `stderr`, terminal and `printError` log lines, directory
 listings, paths, matched lines and drive names from the file-system tools, peripheral names/types/methods and modem info, computer labels and host strings (`ping`,
 `computers`), `cc_call`/`cc_batch` values and errors, the JSON of unknown operations, and every error

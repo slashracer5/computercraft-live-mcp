@@ -6,6 +6,7 @@ import re
 import pytest
 
 from computercraft_live_mcp import formatting
+from computercraft_live_mcp.config import reset_config
 from computercraft_live_mcp.formatting import FORMATTERS, format_result
 
 OPEN = re.compile(r'<untrusted source="([A-Za-z_]+)" id="([0-9a-f]{8})">')
@@ -135,8 +136,8 @@ WRAPPED = [
     (
         "cc_network",
         "network",
-        reply({"devices": DEVICES, "modems": MODEMS, "on_ship": "SHIP"}),
-        ["dev_NAME", "TYPE_x", "getMETHOD", "METHERR", "MODEM_side", "LOCAL_name", "SHIP"],
+        reply({"devices": DEVICES, "modems": MODEMS}),
+        ["dev_NAME", "TYPE_x", "getMETHOD", "METHERR", "MODEM_side", "LOCAL_name"],
     ),
     ("cc_peripherals", "peripherals", {"ok": True, "peripherals": DEVICES}, ["dev_NAME", "TYPE_x", "getMETHOD"]),
     (
@@ -168,6 +169,16 @@ WRAPPED = [
 @pytest.mark.parametrize(("op", "res", "needles"), [case[1:] for case in WRAPPED], ids=[case[0] for case in WRAPPED])
 def test_acceptance_outputs_are_wrapped(op, res, needles):
     assert_only_in_blocks(format_result(op, res), *needles)
+
+
+def test_profile_fields_are_wrapped(monkeypatch):
+    # A mod profile's cc_network header fields (#23): text values stay in blocks; booleans and numbers are printed.
+    monkeypatch.setenv("CC_MCP_PROFILE", "sable")
+    reset_config()
+    text = format_result("network", reply({"devices": DEVICES, "on_ship": "SHIP", "ship_mass": "MASS"}))
+    assert_only_in_blocks(text, "SHIP", "MASS")
+    text = format_result("network", reply({"devices": DEVICES, "on_ship": True, "ship_mass": 12.5}))
+    assert text.splitlines()[1] == "1 peripherals (on_ship=true, ship_mass=12.5)"
 
 
 def test_known_kind_is_a_server_line_and_unknown_kind_is_not():
@@ -261,7 +272,10 @@ CALLS = [{"peripheral": "dev", "method": "get", "args": [1]}]
 
 @pytest.mark.parametrize("op", [*FORMATTERS, "future"])
 @pytest.mark.parametrize("ok", [True, False])
-def test_payload_never_reaches_server_lines(op, ok):
+@pytest.mark.parametrize("profile", ["", "sable"])
+def test_payload_never_reaches_server_lines(monkeypatch, op, ok, profile):
+    monkeypatch.setenv("CC_MCP_PROFILE", profile)  # sable: on_ship / ship_mass are shown too (#23)
+    reset_config()
     res = poison(EVERYTHING)
     if op in DOCS:
         res["returns"] = [json.dumps(json.dumps(poison(DOCS[op])))]
