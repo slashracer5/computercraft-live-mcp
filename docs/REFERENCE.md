@@ -20,9 +20,10 @@ MCP client --MCP (computercraft-mcp) / ccctl--> relay <--outbound websocket-- br
 | `src/computercraft_mcp/formatting.py` | per-operation formatters shared by MCP tools and ccctl; common header and computer-data emission helper |
 | `src/computercraft_mcp/ccctl.py` | command-line client |
 | `src/computercraft_mcp/mcp_server.py` | MCP tools: `cc_exec cc_shell cc_read cc_write cc_list cc_peripherals cc_log cc_cancel cc_ping cc_computers cc_network cc_call cc_batch cc_push cc_pull` |
-| `src/computercraft_mcp/cc_lua.py` | Lua snippet builders and returned-JSON parser for `cc_network` / `cc_call` / `cc_batch` (run through `exec`) |
+| `src/computercraft_mcp/cc_lua.py` | Lua snippet builders and returned-JSON parser for `cc_network` / `cc_call` / `cc_batch` and the `cc_push` check/swap steps (run through `exec`) |
 | `tests/test_*.py`, `tests/conftest.py` | pytest suite: helpers, the relay with a fake computer (in-process, free ports), file transfer; strict `xfail` tests document #1 and #5 |
 | `tests/test_formatting.py` / `tests/test_formatting_clients.py` | formatter snapshots, error cases and MCP/CLI routing checks |
+| `tests/test_atomic_transfer.py` | `cc_push` / `cc_pull` atomicity against a fake computer (failed chunks, preflight refusals, local replace) |
 | `tests/selftest_cc.py` | end-to-end in headless CraftOS-PC incl. MCP client, reboot, relay restart; run by `tests/test_e2e_craftos.py` (marker `e2e`) or on its own; `CRAFTOS_PC` overrides the emulator path |
 | `.github/workflows/ci.yml` | CI: ruff check / format check, pytest on Python 3.10–3.14 × Linux, Windows, macOS |
 
@@ -52,7 +53,7 @@ Create a file named `.bridge-debug` on the computer to get a connection trace in
 | field | meaning |
 |---|---|
 | `ok` | false if the operation failed |
-| `error.kind` | `syntax`, `runtime`, `exit`, `timeout`, `terminated`, `cancelled`, `busy`, `bad_request`, `internal` (relay adds `relay_timeout`, `disconnected`, `not_connected`, `too_large`) |
+| `error.kind` | `syntax`, `runtime`, `exit`, `timeout`, `terminated`, `cancelled`, `busy`, `bad_request`, `internal` (relay adds `relay_timeout`, `disconnected`, `not_connected`, `too_large`; the client adds `relay_unreachable`, `local_file`, and for `cc_push` `no_space`, `read_only`, `is_directory`, `replace_failed`) |
 | `error.message` / `error.traceback` | Lua error text (`exec:3: boom`) and traceback |
 | `stderr` | every `printError(...)` line from the request: how shell reports "No such program" and uncaught program errors |
 | `output` | everything the code drew to the terminal (tail kept past 60 000 chars; `truncated` set) |
@@ -107,9 +108,27 @@ the error block. Status, hints, paging instructions, counts, sizes and durations
   Errors use the shared header and hints. Its CLI exit status remains 0, including on errors.
 - `calls` (`cc_call` / `cc_batch`): elapsed time and each requested call's values or error.
   `network` and `calls` fall back to ordinary exec formatting when no matching JSON document is returned.
-- `push`: uploaded chars, chunks and remote byte size. `pull`: saved bytes and local path.
+- `push`: uploaded chars, chunks and remote byte size. A failed push says how far it got and what is on the
+  computer now (`sent 60000 of 150000 chars in 1 chunk(s); the remote file is unchanged`).
+  `pull`: saved bytes and local path.
 
 Known formatters ignore unrelated fields; unknown operations use the header plus generic JSON.
+
+## File transfer (`cc_push` / `cc_pull`)
+
+Both only touch local folders listed in `CC_MCP_FILES_ROOT`.
+
+- `cc_push` first runs one small `exec` check: it refuses a read-only target, a target that is a directory,
+  and an upload whose UTF-8 size exceeds the free space on the target's drive (`fs.getFreeSpace`; an overwrite
+  needs that room because the new file and the old one coexist until the swap). Nothing is written when the
+  check fails.
+- An overwrite then writes the chunks to `<remote>.part` (a stale one is overwritten) and finishes with one
+  `exec` that deletes the old file and moves the part into place. If a chunk fails, the part is deleted
+  (best effort) and the old file is untouched; if the connection is gone, the part stays behind until the next
+  push to that path overwrites it. A file of your own named `<remote>.part` is overwritten too.
+- `append=True` runs the same check, then appends straight to the file: not atomic.
+- `cc_pull` downloads everything first, writes a temp file in the destination folder, then `os.replace`s it
+  over the destination, so a failed pull leaves an existing local file as it was.
 
 ## Known limits
 
