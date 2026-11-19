@@ -19,6 +19,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from doc_tools import readme_tool_names
+
 from computercraft_mcp import bridge_client as bc
 from computercraft_mcp import cc_lua
 from computercraft_mcp.formatting import format_result
@@ -165,31 +167,12 @@ async def mcp_checks():
 
     async with Client(server_params()) as client:
         names = {t.name for t in (await client.list_tools()).tools}
-        want = {
-            "cc_computers",
-            "cc_ping",
-            "cc_exec",
-            "cc_shell",
-            "cc_read",
-            "cc_write",
-            "cc_list",
-            "cc_peripherals",
-            "cc_log",
-            "cc_cancel",
-            "cc_network",
-            "cc_call",
-            "cc_batch",
-            "cc_push",
-            "cc_pull",
-            "cc_find",
-            "cc_grep",
-            "cc_stat",
-            "cc_delete",
-            "cc_move",
-            "cc_copy",
-            "cc_mkdir",
-        }
-        check("MCP lists all cc_* tools", want <= names, str(want - names))
+        want = readme_tool_names(HERE.parent / "README.md")
+        check(
+            "MCP tools match the README table",
+            names == want,
+            f"missing from MCP: {sorted(want - names)}; extra in MCP: {sorted(names - want)}",
+        )
 
         async def text(name, args):
             r = await client.call_tool(name, args)
