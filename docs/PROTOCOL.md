@@ -269,9 +269,6 @@ File-system snippets independently use `bytewise:true` inside their nested JSON 
 recursively decodes that document as UTF-8 with replacement for invalid bytes. This is distinct from the
 outer result's `encoding` flag and does not fix #1.
 
-`CC_MCP_PROFILE` is a comma-separated, case-insensitive opt-in list, cached with other configuration.
-Unknown profiles warn and are ignored. Currently `sable` adds optional `on_ship` and `ship_mass` to the network
-document via protected sublevel API calls; missing APIs omit the fields. Profiles add no wire operations.
 `CC_MCP_URL`, `CC_MCP_HOME`, `CC_MCP_API_TOKEN`, `CC_MCP_COMPUTER_TOKEN` are also cached configuration;
 clients reread the token file on each call unless the API token override is set.
 

@@ -22,7 +22,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 - `cc_push` overwrites via `<remote>.part` and a single swap after space/read-only/directory preflight; failures use `no_space`, `read_only`, `is_directory` or `replace_failed`. `cc_pull` uses a temporary file and `os.replace()`. (#13)
 - `ccctl write` uploads in chunks without a single-request size cap and overwrites atomically; failures exit 1, including unavailable/unauthorized computer listings and any failed call in call/batch. (#16)
 - Every tool's `computer` and `ccctl --computer` accept an id or case-insensitive exact label; duplicate labels return `ambiguous`, and `no_target` lists `#id (label)` pairs. (#15)
-- Mod-specific output and instructions (Sable `on_ship`/`ship_mass` and Create Avionics notes) require `CC_MCP_PROFILE=sable`; defaults name no mod. (#23)
+- The server carries no mod-specific behaviour: Sable's `on_ship` / `ship_mass` and the Create Avionics notes were removed from `cc_network` and the instructions. (#23)
 - **Breaking:** `computercraft-live-mcp-relay --setup` requires `--computer ID` and issues that computer its own token. `/api/computers` (`cc_computers`) adds `remote`, `auth`, `replacements`, `last_replaced_s_ago` and `previous_remote`. (#17)
 
 ### Deprecated

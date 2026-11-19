@@ -112,12 +112,10 @@ SNAPSHOTS = [
         reply(
             {
                 "devices": DEVICES,
-                "on_ship": True,
-                "ship_mass": 120,
                 "modems": [{"side": "left", "wireless": False, "remote_count": 2}],
             }
         ),
-        "OK\n2 peripherals\n"  # mod fields (on_ship, ship_mass) only show with their profile (#23)
+        "OK\n2 peripherals\n"
         + NETWORK_NOTE
         + "\n"
         + block("modem: side=left, wireless=False, remote_count=2\n\n" + GROUP, "peripherals"),
