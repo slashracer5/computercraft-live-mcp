@@ -78,6 +78,14 @@ The order of steps 1 and 2 doesn't matter; the bridge retries every few seconds.
 | Computer says `bridge.lua` not found after moving to another world | Computers are per world. Do the computer setup again in that world. |
 | The tools don't show up | Approve the server in your client and restart it. |
 
+For timeouts, check the relay log: `queued` is the time spent waiting behind another request;
+`rtt` is the time the computer took to answer. A `relay_timeout` warning shows the
+request timeout, relay wait and whether a cancel was queued. An `answered late` warning means
+the computer replied after the relay gave up. Queue time is not part of the relay timeout.
+When reporting a problem, run `computercraft-mcp-relay --log-level DEBUG --log-file relay.log`.
+Logs still appear on stderr. Tokens are never logged, but DEBUG includes code/command snippets;
+review those before sharing the file.
+
 ## Updating the bridge program
 
 After updating the package, fetch the new `bridge.lua` on the computer and reboot it (the relay serves the copy shipped with the package):
