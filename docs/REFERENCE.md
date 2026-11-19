@@ -18,6 +18,8 @@ MCP client --MCP (computercraft-live-mcp) / ccctl--> relay <--outbound websocket
 | `src/computercraft_live_mcp/relay.py` | aiohttp relay: `/ws` (computer), `/api/call` (control), `/bridge.lua` (install), `/healthz` |
 | `src/computercraft_live_mcp/bridge_client.py` | shared by MCP tools and ccctl: HTTP calls, `network` / `run_calls` (with call validation), the `fs_*` file-system requests, chunked file transfer and root checks |
 | `src/computercraft_live_mcp/formatting.py` | per-operation formatters shared by MCP tools and ccctl; common header and computer-data emission helper |
+| `src/computercraft_live_mcp/config.py` | frozen environment configuration, cached on first use; `reset_config()` clears it |
+| `src/computercraft_live_mcp/limits.py` | message sizes, push chunk budgets, the file-system tools' reply limit and timeout defaults; tests check Lua copies |
 | `src/computercraft_live_mcp/ccctl.py` | command-line client: one subcommand per MCP tool, plus `update-bridge` |
 | `src/computercraft_live_mcp/mcp_server.py` | MCP tools: `cc_exec cc_shell cc_read cc_write cc_list cc_peripherals cc_log cc_cancel cc_ping cc_computers cc_network cc_call cc_batch cc_push cc_pull cc_find cc_grep cc_stat cc_delete cc_move cc_copy cc_mkdir` |
 | `src/computercraft_live_mcp/cc_lua.py` | Lua snippet builders and returned-JSON parser for `cc_network` / `cc_call` / `cc_batch`, the `cc_push` check/swap steps and the file-system tools (run through `exec`) |
@@ -232,7 +234,20 @@ and the result says when paths or matches were left out.
 - Programs that draw straight to `term.native()` bypass the log. Output is the capture terminal's text,
   100 columns wide; interactive programs (`read()`) time out.
 - Text is exact UTF-8 for characters up to U+FFFF; emoji become `?` going in (CC mis-decodes surrogate pairs).
-- `read` returns at most ~60 KB per call, fewer for binary data (message cap 128 KiB): page with `next_offset`.
+- CC:Tweaked's `http.websocket_message` defaults to 131,072 bytes (128 KiB), in both directions.
+  The bridge caps encoded results at 120,000 bytes; the relay caps encoded requests at 100,000 bytes.
+  The relay accepts websocket results up to 262,144 bytes so it is not the bottleneck: exceeding aiohttp's
+  receive limit closes the whole connection.
+- `read` returns at most 60,000 bytes (~60 KB) per call, fewer when result encoding needs more space:
+  page with `next_offset`. Captured output keeps a tail of at most 60,000 characters before result encoding.
+- `cc_push` starts with 60,000 characters per chunk and halves until the JSON-escaped chunk fits 75,000
+  bytes (halving stops at 500 characters or fewer), leaving 20,000 bytes for the path and the other request fields.
+  Very long paths can still exceed the request limit. For `cc_write`, the ~100 KB limit
+  includes JSON escaping and all request fields; use `cc_push` for large files.
+- `cc_find` and `cc_grep` trim their result lists until the reply fits 100,000 bytes as the bridge sends it,
+  and say so ("not all fit in one reply").
+- Requests default to 30 seconds (`cc_network`: 60). The relay waits an extra 5 seconds and the HTTP client an
+  extra 15 seconds, allowing each inner layer to report its timeout before the outer layer gives up.
 - Plain `ws://`, no TLS: keep the relay on the server VLAN / tailnet.
 - The in-game CC config must allow the relay: an allow rule for host + port ABOVE `$private`.
 - Anything coming back from the computer is untrusted data (players can write to signs, chat, files).

@@ -65,6 +65,8 @@ Full walkthrough, troubleshooting and the protocol reference: [docs/QUICKSTART.m
 | `CC_MCP_API_TOKEN` / `CC_MCP_COMPUTER_TOKEN` | from `tokens.json` | override the tokens |
 | `CC_MCP_FILES_ROOT` | *(unset: push/pull refuse)* | local folder(s) `cc_push` / `cc_pull` may touch, separated by `;` on Windows and `:` elsewhere (`ccctl` uses the paths you type) |
 
+Message sizes and timeouts are defined in [src/computercraft_live_mcp/limits.py](src/computercraft_live_mcp/limits.py); see [Known limits](docs/REFERENCE.md#known-limits).
+
 ## Security
 
 This is a remote shell for a game computer. Keep the relay on loopback or a private network, never share `tokens.json`, and read [SECURITY.md](SECURITY.md) before running it anywhere other than your own machine. Anything the computer sends back is untrusted data, and tool results mark it as such.

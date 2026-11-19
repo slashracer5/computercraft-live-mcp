@@ -18,7 +18,6 @@ import argparse
 import asyncio
 import ipaddress
 import json
-import os
 import secrets
 import socket
 import sys
@@ -27,30 +26,25 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
+from .config import DEFAULT_PORT, get_config
+from .limits import DEFAULT_TIMEOUT, MAX_REQ_BYTES, RELAY_TIMEOUT_MARGIN, RELAY_WS_MAX_MSG_SIZE
 
-def _default_home() -> Path:
-    # Projects installed before the rename keep using their existing folder (and tokens).
-    new, old = Path.home() / ".computercraft-live-mcp", Path.home() / ".computercraft-mcp"
-    return old if old.exists() and not new.exists() else new
-
-
-HOME = Path(os.environ.get("CC_MCP_HOME") or _default_home())
-MAX_REQ_BYTES = 100_000  # CC's default websocket cap is 128 KiB per message
 NO_LOCK_OPS = {"ping", "cancel", "log"}  # must work while a long request is running
 
 
 def load_tokens() -> dict:
-    path = HOME / "tokens.json"
+    config = get_config()
+    path = config.home / "tokens.json"
     tokens = json.loads(path.read_text()) if path.exists() else {}
     changed = False
-    for key, env in (("computer", "CC_MCP_COMPUTER_TOKEN"), ("api", "CC_MCP_API_TOKEN")):
-        if os.environ.get(env):
-            tokens[key] = os.environ[env]
+    for key, override in (("computer", config.computer_token), ("api", config.api_token)):
+        if override:
+            tokens[key] = override
         elif key not in tokens:
             tokens[key] = secrets.token_urlsafe(24)
             changed = True
     if changed:
-        HOME.mkdir(parents=True, exist_ok=True)
+        config.home.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(tokens, indent=2))
         try:
             path.chmod(0o600)
@@ -69,6 +63,11 @@ def bmp_only(obj):
     if isinstance(obj, dict):
         return {k: bmp_only(v) for k, v in obj.items()}
     return obj
+
+
+def encode_request(rid: int, body: dict) -> str:
+    """Encode the complete request as sent to CC, including its BMP-only conversion."""
+    return json.dumps(bmp_only({"type": "req", "req": rid, **body}))
 
 
 def err(kind: str, message: str) -> dict:
@@ -141,7 +140,7 @@ class Conn:
     async def _roundtrip(self, body: dict, timeout: float) -> dict:
         self.counter += 1
         rid = self.counter
-        data = json.dumps(bmp_only({"type": "req", "req": rid, **body}))
+        data = encode_request(rid, body)
         if len(data.encode()) > MAX_REQ_BYTES:
             return err("too_large", f"request over {MAX_REQ_BYTES} bytes; send big files in chunks with append")
         fut = asyncio.get_running_loop().create_future()
@@ -179,7 +178,7 @@ def make_app(tokens: dict) -> web.Application:
         return secrets.compare_digest(got, "Bearer " + tokens["api"])
 
     async def ws_handler(request):
-        ws = web.WebSocketResponse(heartbeat=30, max_msg_size=256 * 1024)
+        ws = web.WebSocketResponse(heartbeat=30, max_msg_size=RELAY_WS_MAX_MSG_SIZE)
         await ws.prepare(request)
         try:
             first = await asyncio.wait_for(ws.receive(), 10)
@@ -254,8 +253,8 @@ def make_app(tokens: dict) -> web.Application:
             conn = computers.get(int(target))
             if conn is None:
                 return web.json_response(err("not_connected", f"computer {target} is not connected"), status=404)
-        timeout = float(body.get("timeout", 30))
-        result = await conn.call(body, timeout + 5)
+        timeout = float(body.get("timeout", DEFAULT_TIMEOUT))
+        result = await conn.call(body, timeout + RELAY_TIMEOUT_MARGIN)
         return web.json_response(result)
 
     async def healthz(request):
@@ -305,7 +304,7 @@ def _is_loopback(host: str) -> bool:
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
-    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--port", type=int, default=DEFAULT_PORT)
     p.add_argument("--show-tokens", action="store_true", help="print both tokens and exit")
     p.add_argument("--setup", action="store_true", help="print the exact in-game commands and exit")
     p.add_argument(
@@ -362,7 +361,7 @@ until the relay is up. `exit` in the computer's shell stops the bridge.""")
             "https://github.com/slashracer5/computercraft-live-mcp/blob/main/SECURITY.md",
             file=sys.stderr,
         )
-    print(f"[relay] listening on {a.host}:{a.port}; tokens in {HOME / 'tokens.json'}", flush=True)
+    print(f"[relay] listening on {a.host}:{a.port}; tokens in {get_config().home / 'tokens.json'}", flush=True)
     web.run_app(make_app(tokens), host=a.host, port=a.port, print=None)
 
 

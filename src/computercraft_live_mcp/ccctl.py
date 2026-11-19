@@ -30,7 +30,7 @@
   ccctl update-bridge                                upload the packaged bridge.lua (then restart the bridge)
 
 Shared flags (before or after the subcommand): --json  --computer ID  --timeout SECONDS
-Env: CC_MCP_URL, CC_MCP_API_TOKEN, CC_MCP_HOME (see bridge_client.py).
+Env: CC_MCP_URL, CC_MCP_API_TOKEN, CC_MCP_HOME (shared through bridge_client; see config.py).
 write, push and update-bridge upload in chunks like cc_push: any size, and an overwrite is atomic.
 Local paths are used as typed: CC_MCP_FILES_ROOT only limits the MCP tools.
 Exit status is 1 when the relay or the operation fails (call/batch: when any call fails), else 0.
@@ -44,6 +44,7 @@ from pathlib import Path
 from . import bridge_client as bc
 from . import cc_lua
 from .formatting import format_result
+from .limits import DEFAULT_TIMEOUT, NETWORK_TIMEOUT
 
 RESTART_NOTE = (
     "The running bridge keeps its old code until it restarts: reboot the computer if startup.lua starts the bridge\n"
@@ -229,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     a = build_parser().parse_args(argv)
     as_json = getattr(a, "json", False)
     computer = getattr(a, "computer", None)
-    timeout = getattr(a, "timeout", 60.0 if a.cmd == "network" else 30.0)  # as the MCP tools
+    timeout = getattr(a, "timeout", NETWORK_TIMEOUT if a.cmd == "network" else DEFAULT_TIMEOUT)  # as the MCP tools
     op, res, context = run(a, computer, timeout)
     ok = succeeded(op, res)
     print(json.dumps(res, indent=2) if as_json else format_result(op, res, **context))

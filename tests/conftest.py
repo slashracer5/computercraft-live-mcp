@@ -7,15 +7,19 @@ import pytest
 import pytest_asyncio
 from aiohttp.test_utils import TestServer
 
-from computercraft_live_mcp import bridge_client, formatting, relay
+from computercraft_live_mcp import formatting, relay
+from computercraft_live_mcp.config import reset_config
 
 
 @pytest.fixture(autouse=True)
 def isolated_home(monkeypatch, tmp_path):
-    monkeypatch.setattr(relay, "HOME", tmp_path / "home")
-    monkeypatch.setattr(bridge_client, "HOME", tmp_path / "home")
-    monkeypatch.delenv("CC_MCP_API_TOKEN", raising=False)
-    monkeypatch.delenv("CC_MCP_COMPUTER_TOKEN", raising=False)
+    # The package reads its environment once (config.get_config); reset it around every test.
+    monkeypatch.setenv("CC_MCP_HOME", str(tmp_path / "home"))
+    for name in ("CC_MCP_URL", "CC_MCP_API_TOKEN", "CC_MCP_COMPUTER_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    reset_config()
+    yield
+    reset_config()
 
 
 @pytest.fixture
