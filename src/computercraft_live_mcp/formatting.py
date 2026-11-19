@@ -5,7 +5,7 @@ import re
 import secrets
 from datetime import datetime, timezone
 
-from .cc_lua import network_extras, parse_returned_json
+from .cc_lua import parse_returned_json
 
 HINTS = {
     "relay_unreachable": "The relay is not running. Start it with `computercraft-live-mcp-relay` (leave it running), "
@@ -172,25 +172,13 @@ def _list(res: dict) -> list[str]:
     return ([_untrusted("\n".join(lines), "listing")] if lines else []) + _output(res)
 
 
-def _profile_value(key: str, value) -> str:
-    """A mod profile's header field (cc_lua.network_extras): booleans and numbers are printed by this server, any
-    other value is computer text and stays in a marker block."""
-    if isinstance(value, bool):
-        return str(value).lower()
-    if isinstance(value, (int, float)):
-        return _number(value)
-    return _untrusted(_text(value), key if re.fullmatch(r"[a-zA-Z_]+", key) else "profile", inline=True)
-
-
 def _network_lines(doc: dict) -> list[str]:
     devices = _records(doc.get("devices"))
-    fields, _ = network_extras(doc)  # only fields the computer's reply carries; none without a profile
-    extra = ", ".join(f"{key}=" + _profile_value(key, value) for key, value in fields)
-    lines = [f"{len(devices)} peripherals" + (f" ({extra})" if extra else "")]
-    lines.append(
+    lines = [
+        f"{len(devices)} peripherals",
         "Names can change after rewiring or rebuilding: find peripherals by name prefix at run time, "
-        "do not hard-code them."
-    )
+        "do not hard-code them.",
+    ]
     data = []
     for modem in _records(doc.get("modems")):
         data.append("modem: " + ", ".join(f"{k}={v}" for k, v in modem.items()))
@@ -278,8 +266,7 @@ def _network(res: dict) -> list[str]:
     doc = parse_returned_json(res) if res.get("ok", True) else None
     if not isinstance(doc, dict) or "devices" not in doc:
         return _exec(res)
-    _, notes = network_extras(doc)  # the enabled profiles' notes: cc_network only, not cc_peripherals
-    return _network_lines(doc) + notes + _output(res)
+    return _network_lines(doc) + _output(res)
 
 
 def _calls(res: dict, *, calls: list[dict] | None = None) -> list[str]:

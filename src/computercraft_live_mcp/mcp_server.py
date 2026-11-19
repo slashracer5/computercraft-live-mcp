@@ -3,7 +3,6 @@
 
 Env: CC_MCP_URL, CC_MCP_HOME, CC_MCP_API_TOKEN (shared through bridge_client; see config.py).
 CC_MCP_FILES_ROOT selects local folders cc_push/cc_pull may touch (read per call; no default).
-CC_MCP_PROFILE enables opt-in mod profiles (cc_lua.PROFILES), read once at start-up.
 """
 
 import asyncio
@@ -12,7 +11,6 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from . import bridge_client as bc
-from . import cc_lua
 from .formatting import format_result
 from .limits import DEFAULT_TIMEOUT, NETWORK_TIMEOUT
 
@@ -43,14 +41,12 @@ Working with peripherals:
   your request times out) while the game is paused or unfocused: ask the user to keep Minecraft focused.
 - Setters and other main-thread peripheral calls cost one game tick each when sequential;
   cc_batch(parallel=True) does them all in one tick. Plain peripheral getters are free.
-- Do not trust a mod's documentation for signs, units or directions: verify with a one-variable
-  physical test and a sensor before relying on it.
 - Upload programs with cc_push (do not paste big files through cc_write); fetch logs with cc_pull.
   Both only work for local folders the user listed in CC_MCP_FILES_ROOT.
 - cc_exec results are JSON-ish text; objects with metatables (e.g. matrices) lose their fields in JSON.
 """
 
-server = MCPServer("computercraft", instructions=INSTRUCTIONS + cc_lua.profile_instructions())
+server = MCPServer("computercraft", instructions=INSTRUCTIONS)
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
 CHANGES = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
@@ -182,10 +178,10 @@ async def cc_call(
 async def cc_batch(
     calls: list[dict], parallel: bool = True, timeout: float = DEFAULT_TIMEOUT, computer: int | None = None
 ) -> str:
-    """Run many peripheral calls in one request. `calls` = [{"peripheral": "minecraft:chest_0", "method":
-    "getItemDetail", "args": [1]}, ...]. With parallel=True (default) they run concurrently, so N reads cost one
-    game tick instead of N (use for sensor sweeps and control-loop style reads/writes). Each call reports its own
-    result or error."""
+    """Run many peripheral calls in one request. `calls` = [{"peripheral": "minecraft:chest_0",
+    "method": "getItemDetail", "args": [1]}, ...]. With parallel=True (default) they run concurrently, so N reads
+    cost one game tick instead of N (use for sensor sweeps and control-loop style reads/writes). Each call reports
+    its own result or error."""
     return await _run_calls(calls, parallel, timeout, computer)
 
 

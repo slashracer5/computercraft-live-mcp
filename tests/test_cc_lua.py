@@ -101,8 +101,6 @@ def test_format_calls():
 
 def test_format_network_groups_devices():
     doc = {
-        "on_ship": True,
-        "ship_mass": 123,
         "modems": [{"side": "left", "local_name": "computer_7"}],
         "devices": [
             {"name": "dev_a", "types": ["widget"], "methods": ["get", "set"]},
@@ -111,7 +109,6 @@ def test_format_network_groups_devices():
     }
     text = formatting.format_result("network", exec_reply(doc))
     assert "2 peripherals" in text
-    assert "on_ship" not in text and "ship_mass" not in text  # shown only with CC_MCP_PROFILE=sable (#23)
     assert "computer_7" in text
     assert "type widget  x2" in text
     assert "dev_a, dev_b" in text
