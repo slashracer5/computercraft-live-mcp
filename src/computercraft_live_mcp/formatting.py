@@ -174,18 +174,11 @@ def _list(res: dict) -> list[str]:
 
 def _network_lines(doc: dict) -> list[str]:
     devices = _records(doc.get("devices"))
-    ship = []
-    if "on_ship" in doc:
-        on_ship = doc["on_ship"]
-        text = str(on_ship).lower() if isinstance(on_ship, bool) else _untrusted(_text(on_ship), "on_ship", inline=True)
-        ship.append("on_ship=" + text)
-    if "ship_mass" in doc:
-        ship.append(f"ship_mass={_number(doc['ship_mass'])}")
-    lines = [f"{len(devices)} peripherals" + (f" ({', '.join(ship)})" if ship else "")]
-    lines.append(
-        "Names can change after rewiring or rebuilding (ship_* zone names derive from the bow): "
-        "find peripherals by name prefix at run time, do not hard-code them."
-    )
+    lines = [
+        f"{len(devices)} peripherals",
+        "Names can change after rewiring or rebuilding: find peripherals by name prefix at run time, "
+        "do not hard-code them.",
+    ]
     data = []
     for modem in _records(doc.get("modems")):
         data.append("modem: " + ", ".join(f"{k}={v}" for k, v in modem.items()))

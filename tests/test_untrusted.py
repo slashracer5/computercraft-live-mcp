@@ -135,8 +135,8 @@ WRAPPED = [
     (
         "cc_network",
         "network",
-        reply({"devices": DEVICES, "modems": MODEMS, "on_ship": "SHIP"}),
-        ["dev_NAME", "TYPE_x", "getMETHOD", "METHERR", "MODEM_side", "LOCAL_name", "SHIP"],
+        reply({"devices": DEVICES, "modems": MODEMS}),
+        ["dev_NAME", "TYPE_x", "getMETHOD", "METHERR", "MODEM_side", "LOCAL_name"],
     ),
     ("cc_peripherals", "peripherals", {"ok": True, "peripherals": DEVICES}, ["dev_NAME", "TYPE_x", "getMETHOD"]),
     (
@@ -247,8 +247,6 @@ DOCS = {
     "network": {
         "devices": [{"name": "p", "types": ["t"], "methods": ["m"], "methods_error": "e"}],
         "modems": [{"side": "s", "local_name": "l", "wireless": True, "remote_count": 2}],
-        "on_ship": "x",
-        "ship_mass": 1,
     },
     "calls": {
         "n": 2,

@@ -197,7 +197,7 @@ Every block gets a fresh random 8-hex-digit id that does not occur in its conten
 close the block early. A one-line value inside a server line uses the same markers on that line
 (`returns: <untrusted source="returns" id="…">42</untrusted id="…">`). `source` is a fixed word chosen by
 the formatter (`file`, `output`, `returns`, `stderr`, `error`, `listing`, `terminal`, `printError`,
-`peripherals`, `on_ship`, `computers`, `ping`, `call`, `call_error`, `result`, `paths`, `matches`, `path`, `drive`).
+`peripherals`, `computers`, `ping`, `call`, `call_error`, `result`, `paths`, `matches`, `path`, `drive`).
 Wrapped: file data, terminal output, return values, `stderr`, terminal and `printError` log lines, directory
 listings, paths, matched lines and drive names from the file-system tools, peripheral names/types/methods and modem info, computer labels and host strings (`ping`,
 `computers`), `cc_call`/`cc_batch` values and errors, the JSON of unknown operations, and every error
@@ -211,7 +211,7 @@ the error block. Status, hints, paging instructions, counts, sizes and durations
 - `read`: file data, preceded by `[more data: call again with offset=N]` whenever `eof` is false.
 - `write`: remote size in bytes. `list`: `d name/` for directories, right-aligned byte size then name for files.
 - `peripherals` / `network`: names grouped by type and methods, with methods listed once per group.
-  `network` also includes modem and ship information. Names and methods are sorted within groups.
+  `network` also includes modem information. Names and methods are sorted within groups.
   Types retain the computer's reported order, with the primary type first.
 - `log`: `last_error_id`, terminal lines (`!` marks red text), and `printError` entries with id and time.
 - `ping`: id, label, clock, day, host and free space. `cancel`: the bridge's reported `cancelled` flag.

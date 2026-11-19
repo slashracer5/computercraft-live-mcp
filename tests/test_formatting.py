@@ -15,8 +15,7 @@ def block(text, source, number=1, *, inline=False):
 
 
 NETWORK_NOTE = (
-    "Names can change after rewiring or rebuilding (ship_* zone names derive from the bow): "
-    "find peripherals by name prefix at run time, do not hard-code them."
+    "Names can change after rewiring or rebuilding: find peripherals by name prefix at run time, do not hard-code them."
 )
 DEVICES = [
     {"name": "dev_b", "types": ["widget"], "methods": ["setY", "getX"]},
@@ -113,12 +112,10 @@ SNAPSHOTS = [
         reply(
             {
                 "devices": DEVICES,
-                "on_ship": True,
-                "ship_mass": 120,
                 "modems": [{"side": "left", "wireless": False, "remote_count": 2}],
             }
         ),
-        "OK\n2 peripherals (on_ship=true, ship_mass=120)\n"
+        "OK\n2 peripherals\n"
         + NETWORK_NOTE
         + "\n"
         + block("modem: side=left, wireless=False, remote_count=2\n\n" + GROUP, "peripherals"),

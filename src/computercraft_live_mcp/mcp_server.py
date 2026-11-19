@@ -41,8 +41,6 @@ Working with peripherals:
   your request times out) while the game is paused or unfocused: ask the user to keep Minecraft focused.
 - Setters and other main-thread peripheral calls cost one game tick each when sequential;
   cc_batch(parallel=True) does them all in one tick. Plain peripheral getters are free.
-- Do not trust a mod's documentation for actuator signs or frames: verify with a one-variable
-  physical test and a sensor before relying on it.
 - Upload programs with cc_push (do not paste big files through cc_write); fetch logs with cc_pull.
   Both only work for local folders the user listed in CC_MCP_FILES_ROOT.
 - cc_exec results are JSON-ish text; objects with metatables (e.g. matrices) lose their fields in JSON.
@@ -145,9 +143,8 @@ async def cc_cancel(computer: int | None = None) -> str:
 
 @server.tool(annotations=READ_ONLY)
 async def cc_network(methods: bool = False, computer: int | None = None) -> str:
-    """Inventory every peripheral the computer can see (directly attached, on wired-modem networks, and the
-    Create Avionics / Sable `ship_*` bridge), grouped by type, plus modem info and whether the computer is on a
-    Sable ship (and its mass). methods=True also lists each group's method names once.
+    """Inventory every peripheral the computer can see (directly attached and on wired-modem networks), grouped
+    by type, plus modem info. methods=True also lists each group's method names once.
 
     Names in the output are exactly what to pass to cc_call / cc_batch / peripheral.call. Read-only."""
     res = await asyncio.to_thread(bc.network, methods, computer, NETWORK_TIMEOUT)
@@ -181,9 +178,10 @@ async def cc_call(
 async def cc_batch(
     calls: list[dict], parallel: bool = True, timeout: float = DEFAULT_TIMEOUT, computer: int | None = None
 ) -> str:
-    """Run many peripheral calls in one request. `calls` = [{"peripheral": "ship_...", "method": "getSpeed",
-    "args": []}, ...]. With parallel=True (default) they run concurrently, so N reads cost one game tick instead
-    of N (use for sensor sweeps and control-loop style reads/writes). Each call reports its own result or error."""
+    """Run many peripheral calls in one request. `calls` = [{"peripheral": "minecraft:chest_0",
+    "method": "getItemDetail", "args": [1]}, ...]. With parallel=True (default) they run concurrently, so N reads
+    cost one game tick instead of N (use for sensor sweeps and control-loop style reads/writes). Each call reports
+    its own result or error."""
     return await _run_calls(calls, parallel, timeout, computer)
 
 

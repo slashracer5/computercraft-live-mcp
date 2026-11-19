@@ -32,10 +32,6 @@ local want_methods = %(methods)s
 local names = peripheral.getNames()
 table.sort(names)
 local out = { devices = {}, modems = {}, local_names = {} }
-local ok_ship, on_ship = pcall(function() return sublevel.isInPlotGrid() end)
-if ok_ship then out.on_ship = on_ship end
-local ok_mass, mass = pcall(function() return sublevel.getMass() end)
-if ok_mass then out.ship_mass = mass end
 for _, n in ipairs(names) do
   local okT, types = pcall(function() return { peripheral.getType(n) } end)
   local entry = { name = n, types = okT and types or { "?" } }
