@@ -6,6 +6,8 @@ returns ONE JSON string (textutils.serialiseJSON) so the Python side can parse i
 
 import json
 
+from .limits import FS_REPLY_LIMIT
+
 
 def long_string(s: str) -> str:
     """A Lua long-bracket literal that cannot be terminated by anything inside `s`."""
@@ -173,7 +175,8 @@ def push_discard_code(part: str) -> str:
 # FS_PRELUDE and answers { ok = true, ... } or { ok = false, reason = ... }; bridge_client turns reasons into errors.
 #   done(t, list)  encodes t as UTF-8 JSON, or byte-wise with t.bytewise set when some text is not valid UTF-8
 #                  (parse_text_json decodes it back), and drops the tail of `list` (setting t.cut) until the reply
-#                  fits one bridge message: the bridge cannot shorten return values itself.
+#                  fits one bridge message (REPLY_LIMIT = limits.FS_REPLY_LIMIT): the bridge cannot shorten return
+#                  values itself.
 #   tick()         yields every 200 ms, so a long walk neither trips CC's "too long without yielding" abort nor
 #                  holds up cc_cancel and the request's timeout timer.
 #   outside(p)     true for the root directory and anything above it.
@@ -182,8 +185,8 @@ def push_discard_code(part: str) -> str:
 #                  disks), and CraftOS-PC's fs.isReadOnly answers true for writable folders made by fs.makeDir("a/b")
 #                  and for new paths beside them.
 # Placeholders are %-format fields; the Lua code itself must not contain a bare percent sign.
-FS_PRELUDE = r"""
-local REPLY_LIMIT = 100000
+_FS_PRELUDE = r"""
+local REPLY_LIMIT = %(reply_limit)d
 local function encode(t)
   t.bytewise = nil
   local ok, s = pcall(textutils.serialiseJSON, t, { unicode_strings = true })
@@ -223,6 +226,7 @@ local function read_only(p)
   return fs.isReadOnly(p)
 end
 """
+FS_PRELUDE = _FS_PRELUDE % {"reply_limit": FS_REPLY_LIMIT}
 
 FIND = r"""
 local pattern, limit = %(pattern)s, %(limit)d

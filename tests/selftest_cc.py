@@ -19,6 +19,10 @@ import tempfile
 import time
 from pathlib import Path
 
+from computercraft_live_mcp import bridge_client as bc
+from computercraft_live_mcp import cc_lua
+from computercraft_live_mcp.formatting import format_result
+
 HERE = Path(__file__).parent
 if "CRAFTOS_PC" in os.environ:
     EMU = Path(os.environ["CRAFTOS_PC"]).expanduser()
@@ -46,9 +50,6 @@ with socket.socket() as port_socket:
 TMP = Path(tempfile.mkdtemp(prefix="ccmcp_cc_"))
 os.environ["CC_MCP_HOME"] = str(TMP / "home")
 os.environ["CC_MCP_URL"] = f"http://127.0.0.1:{PORT}"
-from computercraft_live_mcp import bridge_client as bc  # noqa: E402  (reads the env vars above at import)
-from computercraft_live_mcp import cc_lua  # noqa: E402
-from computercraft_live_mcp.formatting import format_result  # noqa: E402
 
 BRIDGE_LUA = Path(bc.__file__).parent / "bridge.lua"
 

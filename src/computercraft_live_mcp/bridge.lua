@@ -13,6 +13,8 @@
 
 local CONFIG_FILE = ".bridge.json"
 local ERROR_FILE = ".bridge-errors.log"
+-- MAX_MESSAGE, DEFAULT_TIMEOUT, OUTPUT_LIMIT and READ_LIMIT mirror src/computercraft_live_mcp/limits.py
+-- (tests/test_limits.py checks they match): change both together.
 local MAX_MESSAGE = 120000      -- stay under CC's default 128 KiB websocket cap
 local DEFAULT_TIMEOUT = 30      -- seconds per request
 local CAP_W, CAP_H = 100, 1000  -- capture terminal size
