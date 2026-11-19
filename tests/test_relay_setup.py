@@ -6,14 +6,14 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from computercraft_mcp import relay
+from computercraft_live_mcp import relay
 
 
 class RelaySetupTest(unittest.TestCase):
     def run_setup(self, *args):
         stdout, stderr = io.StringIO(), io.StringIO()
         with (
-            patch.object(sys, "argv", ["computercraft-mcp-relay", "--setup", *args]),
+            patch.object(sys, "argv", ["computercraft-live-mcp-relay", "--setup", *args]),
             patch.object(relay, "load_tokens", return_value={"computer": "test-token"}),
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
@@ -50,7 +50,7 @@ class RelaySetupTest(unittest.TestCase):
     def test_missing_route_explains_how_to_supply_an_address(self):
         stderr = io.StringIO()
         with (
-            patch.object(sys, "argv", ["computercraft-mcp-relay", "--setup", "--host", "::"]),
+            patch.object(sys, "argv", ["computercraft-live-mcp-relay", "--setup", "--host", "::"]),
             patch.object(relay, "_default_route_address", side_effect=OSError),
             contextlib.redirect_stderr(stderr),
             self.assertRaises(SystemExit) as exit_error,

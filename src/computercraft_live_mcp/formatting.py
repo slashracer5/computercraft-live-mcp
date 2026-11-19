@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from .cc_lua import parse_returned_json
 
 HINTS = {
-    "relay_unreachable": "The relay is not running. Start it with `computercraft-mcp-relay` (leave it running), "
+    "relay_unreachable": "The relay is not running. Start it with `computercraft-live-mcp-relay` (leave it running), "
     "then retry. The in-game computer reconnects by itself within seconds.",
     "no_target": "Several computers are connected: repeat the call with computer=<id> (cc_computers lists them).",
     "not_connected": "That computer is offline (world closed, chunk unloaded, or bridge stopped). "

@@ -6,7 +6,7 @@ Lets an AI assistant run code and read files on an in-game ComputerCraft compute
 including from programs a player started by hand.
 
 ```
-MCP client --MCP (computercraft-mcp) / ccctl--> relay <--outbound websocket-- bridge.lua (in-game)
+MCP client --MCP (computercraft-live-mcp) / ccctl--> relay <--outbound websocket-- bridge.lua (in-game)
                HTTP + API token                 one port        computer token
 ```
 
@@ -14,13 +14,13 @@ MCP client --MCP (computercraft-mcp) / ccctl--> relay <--outbound websocket-- br
 
 | file | what |
 |---|---|
-| `src/computercraft_mcp/bridge.lua` | in-game client. Hosts the computer's shell, records the terminal, answers requests |
-| `src/computercraft_mcp/relay.py` | aiohttp relay: `/ws` (computer), `/api/call` (control), `/bridge.lua` (install), `/healthz` |
-| `src/computercraft_mcp/bridge_client.py` | shared by MCP tools and ccctl: HTTP calls, `network` / `run_calls` (with call validation), the `fs_*` file-system requests, chunked file transfer and root checks |
-| `src/computercraft_mcp/formatting.py` | per-operation formatters shared by MCP tools and ccctl; common header and computer-data emission helper |
-| `src/computercraft_mcp/ccctl.py` | command-line client: one subcommand per MCP tool, plus `update-bridge` |
-| `src/computercraft_mcp/mcp_server.py` | MCP tools: `cc_exec cc_shell cc_read cc_write cc_list cc_peripherals cc_log cc_cancel cc_ping cc_computers cc_network cc_call cc_batch cc_push cc_pull cc_find cc_grep cc_stat cc_delete cc_move cc_copy cc_mkdir` |
-| `src/computercraft_mcp/cc_lua.py` | Lua snippet builders and returned-JSON parser for `cc_network` / `cc_call` / `cc_batch`, the `cc_push` check/swap steps and the file-system tools (run through `exec`) |
+| `src/computercraft_live_mcp/bridge.lua` | in-game client. Hosts the computer's shell, records the terminal, answers requests |
+| `src/computercraft_live_mcp/relay.py` | aiohttp relay: `/ws` (computer), `/api/call` (control), `/bridge.lua` (install), `/healthz` |
+| `src/computercraft_live_mcp/bridge_client.py` | shared by MCP tools and ccctl: HTTP calls, `network` / `run_calls` (with call validation), the `fs_*` file-system requests, chunked file transfer and root checks |
+| `src/computercraft_live_mcp/formatting.py` | per-operation formatters shared by MCP tools and ccctl; common header and computer-data emission helper |
+| `src/computercraft_live_mcp/ccctl.py` | command-line client: one subcommand per MCP tool, plus `update-bridge` |
+| `src/computercraft_live_mcp/mcp_server.py` | MCP tools: `cc_exec cc_shell cc_read cc_write cc_list cc_peripherals cc_log cc_cancel cc_ping cc_computers cc_network cc_call cc_batch cc_push cc_pull cc_find cc_grep cc_stat cc_delete cc_move cc_copy cc_mkdir` |
+| `src/computercraft_live_mcp/cc_lua.py` | Lua snippet builders and returned-JSON parser for `cc_network` / `cc_call` / `cc_batch`, the `cc_push` check/swap steps and the file-system tools (run through `exec`) |
 | `tests/test_*.py`, `tests/conftest.py` | pytest suite: helpers, the relay with a fake computer (in-process, free ports), file transfer; strict `xfail` tests document #1 and #5 |
 | `tests/test_formatting.py` / `tests/test_formatting_clients.py` | formatter snapshots, error cases and MCP/CLI routing checks |
 | `tests/test_atomic_transfer.py` | `cc_push` / `cc_pull` atomicity against a fake computer (failed chunks, preflight refusals, local replace) |
@@ -32,9 +32,9 @@ MCP client --MCP (computercraft-mcp) / ccctl--> relay <--outbound websocket-- br
 ## Run
 
 ```
-pip install git+https://github.com/slashracer5/computercraft-mcp
-computercraft-mcp-relay --show-tokens          # tokens live in ~/.computercraft-mcp/tokens.json
-computercraft-mcp-relay --host 127.0.0.1 --port 8765
+pip install git+https://github.com/slashracer5/computercraft-live-mcp
+computercraft-live-mcp-relay --show-tokens          # tokens live in ~/.computercraft-live-mcp/tokens.json
+computercraft-live-mcp-relay --host 127.0.0.1 --port 8765
 ```
 In-game: `wget http://HOST:PORT/bridge.lua bridge.lua`, then `bridge ws://HOST:PORT/ws <computer-token>`.
 For restarts put `shell.run("bridge")` in `startup.lua` (the url/token are saved in `.bridge.json`).

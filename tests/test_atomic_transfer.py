@@ -3,9 +3,9 @@ import os
 
 import pytest
 
-from computercraft_mcp import bridge_client as bc
-from computercraft_mcp import cc_lua, formatting
-from computercraft_mcp.formatting import format_result
+from computercraft_live_mcp import bridge_client as bc
+from computercraft_live_mcp import cc_lua, formatting
+from computercraft_live_mcp.formatting import format_result
 
 pytestmark = pytest.mark.usefixtures("deterministic_ids")
 

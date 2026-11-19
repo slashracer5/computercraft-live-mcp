@@ -4,7 +4,7 @@ import json
 import aiohttp
 import pytest
 
-from computercraft_mcp import relay
+from computercraft_live_mcp import relay
 
 
 def test_tokens_are_distinct_and_persisted(tokens):

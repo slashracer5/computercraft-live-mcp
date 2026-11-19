@@ -27,7 +27,14 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
-HOME = Path(os.environ.get("CC_MCP_HOME", Path.home() / ".computercraft-mcp"))
+
+def _default_home() -> Path:
+    # Projects installed before the rename keep using their existing folder (and tokens).
+    new, old = Path.home() / ".computercraft-live-mcp", Path.home() / ".computercraft-mcp"
+    return old if old.exists() and not new.exists() else new
+
+
+HOME = Path(os.environ.get("CC_MCP_HOME") or _default_home())
 MAX_REQ_BYTES = 100_000  # CC's default websocket cap is 128 KiB per message
 NO_LOCK_OPS = {"ping", "cancel", "log"}  # must work while a long request is running
 
@@ -345,14 +352,14 @@ To start it automatically whenever the computer boots, also run:
         (type this one line, then Ctrl, choose Save, Ctrl, choose Exit)
         shell.run("bridge")
 
-The relay must be running (computercraft-mcp-relay), but the order does not matter: the bridge retries
+The relay must be running (computercraft-live-mcp-relay), but the order does not matter: the bridge retries
 until the relay is up. `exit` in the computer's shell stops the bridge.""")
         return
     if not _is_loopback(a.host):
         print(
             "[relay] warning: non-loopback listener uses plain HTTP/WebSocket and sends tokens "
             "without encryption. Use only on a trusted network. "
-            "https://github.com/slashracer5/computercraft-mcp/blob/main/SECURITY.md",
+            "https://github.com/slashracer5/computercraft-live-mcp/blob/main/SECURITY.md",
             file=sys.stderr,
         )
     print(f"[relay] listening on {a.host}:{a.port}; tokens in {HOME / 'tokens.json'}", flush=True)

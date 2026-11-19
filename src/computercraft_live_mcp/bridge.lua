@@ -1,4 +1,4 @@
--- bridge.lua - structured remote-exec client for the ComputerCraft MCP relay (computercraft-mcp).
+-- bridge.lua - structured remote-exec client for the ComputerCraft MCP relay (computercraft-live-mcp).
 --
 --   bridge <ws-url> <computer-token>   first run (saved to .bridge.json)
 --   bridge                             later runs (reads .bridge.json)

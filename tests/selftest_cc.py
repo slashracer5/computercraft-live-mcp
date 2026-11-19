@@ -46,9 +46,9 @@ with socket.socket() as port_socket:
 TMP = Path(tempfile.mkdtemp(prefix="ccmcp_cc_"))
 os.environ["CC_MCP_HOME"] = str(TMP / "home")
 os.environ["CC_MCP_URL"] = f"http://127.0.0.1:{PORT}"
-from computercraft_mcp import bridge_client as bc  # noqa: E402  (reads the env vars above at import)
-from computercraft_mcp import cc_lua  # noqa: E402
-from computercraft_mcp.formatting import format_result  # noqa: E402
+from computercraft_live_mcp import bridge_client as bc  # noqa: E402  (reads the env vars above at import)
+from computercraft_live_mcp import cc_lua  # noqa: E402
+from computercraft_live_mcp.formatting import format_result  # noqa: E402
 
 BRIDGE_LUA = Path(bc.__file__).parent / "bridge.lua"
 
@@ -71,7 +71,7 @@ def check(name, cond, detail=""):
 
 def start_relay():
     procs["relay"] = subprocess.Popen(
-        [sys.executable, "-m", "computercraft_mcp.relay", "--port", str(PORT)],
+        [sys.executable, "-m", "computercraft_live_mcp.relay", "--port", str(PORT)],
         env=os.environ.copy(),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -139,7 +139,7 @@ async def mcp_checks():
     from mcp import Client, StdioServerParameters
 
     params = StdioServerParameters(
-        command=sys.executable, args=["-m", "computercraft_mcp.mcp_server"], env=dict(os.environ), cwd=str(HERE)
+        command=sys.executable, args=["-m", "computercraft_live_mcp.mcp_server"], env=dict(os.environ), cwd=str(HERE)
     )
     async with Client(params) as client:
         names = {t.name for t in (await client.list_tools()).tools}
@@ -580,7 +580,7 @@ def ccctl(*args, **env):
     e = {k: v for k, v in os.environ.items() if k != "CC_MCP_FILES_ROOT"}
     e.update(env)
     p = subprocess.run(
-        [sys.executable, "-m", "computercraft_mcp.ccctl", *args],
+        [sys.executable, "-m", "computercraft_live_mcp.ccctl", *args],
         env=e,
         cwd=TMP,
         capture_output=True,

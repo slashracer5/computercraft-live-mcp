@@ -12,7 +12,7 @@ venv/
 
 # Secrets and runtime state (tokens, relay data, in-game saves)
 tokens.json
-.computercraft-mcp/
+.computercraft-live-mcp/
 .bridge.json
 .bridge-debug*
 .bridge-errors.log

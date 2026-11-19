@@ -1,9 +1,18 @@
-# computercraft-mcp
+# computercraft-live-mcp
 
-Let an AI assistant (Claude Code, or any MCP client) work on a real **ComputerCraft: Tweaked** computer inside a running Minecraft world: run Lua, read and write files, call peripherals, and see every error, including from programs a player started by hand.
+**Live, in-world control of ComputerCraft: Tweaked computers for AI assistants.** Let an AI assistant (Claude Code, or any MCP client) work on a real computer inside a running Minecraft world: run Lua, read and write files, call peripherals, and see every error, including from programs a player started by hand.
+
+## What this is
+
+- **The real computer, not a model of it.** Every call runs on a computer in your actual world or server, with your real mods, peripherals, config and timing. Nothing is emulated.
+- **Built for operating and debugging.** Fix a broken program on a live base, inspect a wired-modem network, read what a player's program just printed, push a file to a computer, or watch a script misbehave in the conditions where it actually runs.
+- **Shared with the players.** The computer's own shell keeps working. The AI and a player can use the same machine, and the AI sees errors from programs the player launched.
+- **Nothing to build or maintain.** A small Python relay and one Lua file. There is no ROM to build and no per-mod modelling to keep up with, so new mods and CC:Tweaked releases work as soon as they run in your game.
+
+It needs a running Minecraft world with CC:Tweaked. It does not run ComputerCraft programs outside the game.
 
 ```
-MCP client --stdio--> computercraft-mcp --HTTP + API token--> relay <--outbound websocket-- bridge.lua (in-game computer)
+MCP client --stdio--> computercraft-live-mcp --HTTP + API token--> relay <--outbound websocket-- bridge.lua (in-game computer)
 ```
 
 The in-game computer connects *out* to a small relay on your machine, so nothing needs to be exposed to the internet and the computer's own shell keeps working for players.
@@ -30,9 +39,9 @@ Computer data (file contents, output, log lines, labels, peripheral names, error
 ## Quick start
 
 ```
-pip install git+https://github.com/slashracer5/computercraft-mcp      # or: uv tool install git+https://...
-computercraft-mcp-relay --setup                                    # starts nothing; prints the in-game commands with your token
-computercraft-mcp-relay                                            # run the relay (leave it running)
+pip install git+https://github.com/slashracer5/computercraft-live-mcp      # or: uv tool install git+https://...
+computercraft-live-mcp-relay --setup                                    # starts nothing; prints the in-game commands with your token
+computercraft-live-mcp-relay                                            # run the relay (leave it running)
 ```
 
 1. In CC:Tweaked's server config, allow the relay (rule goes **above** the default `$private` deny), then restart the world:
@@ -52,7 +61,7 @@ Full walkthrough, troubleshooting and the protocol reference: [docs/QUICKSTART.m
 | variable | default | meaning |
 |---|---|---|
 | `CC_MCP_URL` | `http://127.0.0.1:8765` | relay address used by the MCP server and `ccctl` |
-| `CC_MCP_HOME` | `~/.computercraft-mcp` | folder holding `tokens.json` (created on first run) |
+| `CC_MCP_HOME` | `~/.computercraft-live-mcp` | folder holding `tokens.json` (created on first run) |
 | `CC_MCP_API_TOKEN` / `CC_MCP_COMPUTER_TOKEN` | from `tokens.json` | override the tokens |
 | `CC_MCP_FILES_ROOT` | *(unset: push/pull refuse)* | local folder(s) `cc_push` / `cc_pull` may touch, separated by `;` on Windows and `:` elsewhere (`ccctl` uses the paths you type) |
 

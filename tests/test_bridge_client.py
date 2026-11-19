@@ -8,8 +8,8 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer as AiohttpTestServer
 
-from computercraft_mcp import bridge_client as bc
-from computercraft_mcp import formatting
+from computercraft_live_mcp import bridge_client as bc
+from computercraft_live_mcp import formatting
 
 
 @pytest.fixture
