@@ -24,6 +24,8 @@ The in-game computer connects *out* to a small relay on your machine, so nothing
 | `cc_exec` | run Lua (persistent session, returns values, terminal output and errors) |
 | `cc_shell` | run a shell command / program |
 | `cc_read` `cc_write` `cc_list` | files on the computer (paged reads, append) |
+| `cc_find` `cc_grep` `cc_stat` | read-only file search: paths by glob, `path:line: text` matches, size/drive/free space |
+| `cc_mkdir` `cc_copy` `cc_move` `cc_delete` | manage files without running code; never overwrite, and delete/move are marked destructive |
 | `cc_push` `cc_pull` | upload / download files between your disk and the computer (opt-in, see below) |
 | `cc_peripherals` `cc_network` | list peripherals (grouped by type, with methods, across wired modems) |
 | `cc_call` `cc_batch` | call peripheral methods; a batch can run in parallel in one game tick |

@@ -32,6 +32,13 @@ TOOL_TO_SUBCOMMAND = {
     "cc_batch": "batch",
     "cc_push": "push",
     "cc_pull": "pull",
+    "cc_find": "find",
+    "cc_grep": "grep",
+    "cc_stat": "stat",
+    "cc_delete": "rm",
+    "cc_move": "mv",
+    "cc_copy": "cp",
+    "cc_mkdir": "mkdir",
 }
 
 

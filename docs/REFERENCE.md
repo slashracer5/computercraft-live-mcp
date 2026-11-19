@@ -16,14 +16,15 @@ MCP client --MCP (computercraft-live-mcp) / ccctl--> relay <--outbound websocket
 |---|---|
 | `src/computercraft_live_mcp/bridge.lua` | in-game client. Hosts the computer's shell, records the terminal, answers requests |
 | `src/computercraft_live_mcp/relay.py` | aiohttp relay: `/ws` (computer), `/api/call` (control), `/bridge.lua` (install), `/healthz` |
-| `src/computercraft_live_mcp/bridge_client.py` | shared by MCP tools and ccctl: HTTP calls, `network` / `run_calls` (with call validation), chunked file transfer and root checks |
+| `src/computercraft_live_mcp/bridge_client.py` | shared by MCP tools and ccctl: HTTP calls, `network` / `run_calls` (with call validation), the `fs_*` file-system requests, chunked file transfer and root checks |
 | `src/computercraft_live_mcp/formatting.py` | per-operation formatters shared by MCP tools and ccctl; common header and computer-data emission helper |
 | `src/computercraft_live_mcp/ccctl.py` | command-line client: one subcommand per MCP tool, plus `update-bridge` |
-| `src/computercraft_live_mcp/mcp_server.py` | MCP tools: `cc_exec cc_shell cc_read cc_write cc_list cc_peripherals cc_log cc_cancel cc_ping cc_computers cc_network cc_call cc_batch cc_push cc_pull` |
-| `src/computercraft_live_mcp/cc_lua.py` | Lua snippet builders and returned-JSON parser for `cc_network` / `cc_call` / `cc_batch` and the `cc_push` check/swap steps (run through `exec`) |
+| `src/computercraft_live_mcp/mcp_server.py` | MCP tools: `cc_exec cc_shell cc_read cc_write cc_list cc_peripherals cc_log cc_cancel cc_ping cc_computers cc_network cc_call cc_batch cc_push cc_pull cc_find cc_grep cc_stat cc_delete cc_move cc_copy cc_mkdir` |
+| `src/computercraft_live_mcp/cc_lua.py` | Lua snippet builders and returned-JSON parser for `cc_network` / `cc_call` / `cc_batch`, the `cc_push` check/swap steps and the file-system tools (run through `exec`) |
 | `tests/test_*.py`, `tests/conftest.py` | pytest suite: helpers, the relay with a fake computer (in-process, free ports), file transfer; strict `xfail` tests document #1 and #5 |
 | `tests/test_formatting.py` / `tests/test_formatting_clients.py` | formatter snapshots, error cases and MCP/CLI routing checks |
 | `tests/test_atomic_transfer.py` | `cc_push` / `cc_pull` atomicity against a fake computer (failed chunks, preflight refusals, local replace) |
+| `tests/test_fs_tools.py` | file-system tools: snippet builders, refusals before sending, refusal-to-error mapping, formatters, MCP annotations, same text from ccctl |
 | `tests/test_ccctl.py` | every MCP tool has a `ccctl` subcommand (and a row below), same request and text as the tool, exit status, `--json`, chunked `write`, `update-bridge` |
 | `tests/selftest_cc.py` | end-to-end in headless CraftOS-PC incl. MCP client, reboot, relay restart; run by `tests/test_e2e_craftos.py` (marker `e2e`) or on its own; `CRAFTOS_PC` overrides the emulator path |
 | `.github/workflows/ci.yml` | CI: ruff check / format check, pytest on Python 3.10–3.14 × Linux, Windows, macOS |
@@ -64,6 +65,13 @@ raw result instead. Shared flags, before or after the subcommand: `--json`, `--c
 | `cc_batch` | `ccctl batch [CALLS \| --file CALLS.json] [--sequential]`: a JSON list as for `cc_batch` (stdin when neither is given); parallel unless `--sequential` |
 | `cc_push` | `ccctl push LOCAL REMOTE [--append]` |
 | `cc_pull` | `ccctl pull REMOTE LOCAL` |
+| `cc_find` | `ccctl find PATTERN [--max N]` |
+| `cc_grep` | `ccctl grep PATTERN [PATH] [--lua] [--max N] [--include-rom]`: plain text unless `--lua` |
+| `cc_stat` | `ccctl stat PATH` |
+| `cc_delete` | `ccctl rm PATH [--recursive]` |
+| `cc_move` | `ccctl mv SRC DST` |
+| `cc_copy` | `ccctl cp SRC DST` |
+| `cc_mkdir` | `ccctl mkdir PATH` |
 | *(no MCP tool)* | `ccctl update-bridge`: upload the packaged `bridge.lua`, then print how to restart the bridge |
 
 - `write` uploads like `cc_push` (`bridge_client.push_text`): chunked, so any size works, and an overwrite is atomic
@@ -88,7 +96,7 @@ Create a file named `.bridge-debug` on the computer to get a connection trace in
 | field | meaning |
 |---|---|
 | `ok` | false if the operation failed |
-| `error.kind` | `syntax`, `runtime`, `exit`, `timeout`, `terminated`, `cancelled`, `busy`, `bad_request`, `internal` (relay adds `relay_timeout`, `disconnected`, `not_connected`, `too_large`; the client adds `relay_unreachable`, `local_file`, and for `cc_push` `no_space`, `read_only`, `is_directory`, `replace_failed`) |
+| `error.kind` | `syntax`, `runtime`, `exit`, `timeout`, `terminated`, `cancelled`, `busy`, `bad_request`, `internal` (relay adds `relay_timeout`, `disconnected`, `not_connected`, `too_large`; the client adds `relay_unreachable`, `local_file`, for `cc_push` `no_space`, `read_only`, `is_directory`, `replace_failed`, and for the file-system tools `not_found`, `exists`, `not_empty`, `read_only`) |
 | `error.message` / `error.traceback` | Lua error text (`exec:3: boom`) and traceback |
 | `stderr` | every `printError(...)` line from the request: how shell reports "No such program" and uncaught program errors |
 | `output` | everything the code drew to the terminal (tail kept past 60 000 chars; `truncated` set) |
@@ -121,9 +129,9 @@ Every block gets a fresh random 8-hex-digit id that does not occur in its conten
 close the block early. A one-line value inside a server line uses the same markers on that line
 (`returns: <untrusted source="returns" id="…">42</untrusted id="…">`). `source` is a fixed word chosen by
 the formatter (`file`, `output`, `returns`, `stderr`, `error`, `listing`, `terminal`, `printError`,
-`peripherals`, `on_ship`, `computers`, `ping`, `call`, `call_error`, `result`).
+`peripherals`, `on_ship`, `computers`, `ping`, `call`, `call_error`, `result`, `paths`, `matches`, `path`, `drive`).
 Wrapped: file data, terminal output, return values, `stderr`, terminal and `printError` log lines, directory
-listings, peripheral names/types/methods and modem info, computer labels and host strings (`ping`,
+listings, paths, matched lines and drive names from the file-system tools, peripheral names/types/methods and modem info, computer labels and host strings (`ping`,
 `computers`), `cc_call`/`cc_batch` values and errors, the JSON of unknown operations, and every error
 message and traceback. Error messages are wrapped even when the relay or the client wrote them: the
 formatter cannot tell those apart from a computer reply that claims the same kind. The kind itself is a
@@ -146,6 +154,15 @@ the error block. Status, hints, paging instructions, counts, sizes and durations
 - `push`: uploaded chars, chunks and remote byte size. A failed push says how far it got and what is on the
   computer now (`sent 60000 of 150000 chars in 1 chunk(s); the remote file is unchanged`).
   `pull`: saved bytes and local path.
+- `find`: the number of matching paths (`200 of 1534 matching paths shown (max_results=200)` when capped), then the
+  paths in a `paths` block, formatted like `list`.
+- `grep`: `N match(es) in M file(s)` plus notes (rom/ skipped, binary files skipped, stopped at `max_matches` or
+  early for the timeout), then `path:line: text` lines in a `matches` block.
+- `stat`: `exists`, `type` (file and size, or directory and entry count), `read-only`, `drive` (in a block),
+  `capacity`, `free`, `created` / `modified` (UTC), each on its own line when the computer reported it.
+- `delete` / `move` / `copy` / `mkdir`: one line saying what was done, with the paths in an inline block:
+  `deleted directory (3 file(s), 1 subdirectory(s), 120 bytes): ...`, `moved file (42 bytes): a.lua -> b.lua`,
+  `created directory: ...` or `directory already exists: ...`.
 
 Known formatters ignore unrelated fields; unknown operations use the header plus generic JSON.
 
@@ -165,6 +182,47 @@ you type; see above).
 - `append=True` runs the same check, then appends straight to the file: not atomic.
 - `cc_pull` downloads everything first, writes a temp file in the destination folder, then `os.replace`s it
   over the destination, so a failed pull leaves an existing local file as it was.
+
+## File-system tools
+
+`cc_find`, `cc_grep` and `cc_stat` are read-only (`readOnlyHint`), so a client can auto-approve them for exploring
+the computer. `cc_delete`, `cc_move`, `cc_copy` and `cc_mkdir` change files without running arbitrary code and are
+annotated so an approval prompt can tell them apart: `cc_delete` and `cc_move` have `destructiveHint=true` (a move
+removes the old path); `cc_copy` and `cc_mkdir` only add (`destructiveHint=false`; `cc_mkdir` is also idempotent).
+All seven are `cc_lua` snippets run through `exec`, so `bridge.lua` is unchanged and they wait behind a running
+request like everything else.
+
+- `cc_find(pattern, max_results=200)`: CC's `fs.find` glob. `*` matches within one path segment (`*/*.lua`); there
+  is no recursive `**`. Sorted; at most `max_results` (1000 max) paths with their size, plus the total count.
+- `cc_grep(pattern, path="", plain=True, max_matches=200, include_rom=False, timeout=30)`: searches one file, or
+  every file under a directory, line by line. `plain=False` makes `pattern` a Lua pattern (an invalid one is a
+  `bad_request`). `rom/` is skipped unless `include_rom=True` or `path` is inside it. Files with a NUL byte in their
+  first 1 KiB count as binary and are skipped. Lines longer than 200 bytes are cut to 200 bytes around the match
+  (`...` marks the cuts). The search yields every 200 ms (so CC's "too long without yielding" abort cannot hit and
+  `cc_cancel` and the timeout still work) and stops by itself at `max_matches` or shortly before `timeout`,
+  returning what it found and saying why it stopped.
+- `cc_stat(path)`: `fs.exists`, `fs.isDir`, `fs.getSize` (or a directory's entry count), read-only (see below),
+  `fs.getDrive`, `fs.getCapacity`, `fs.getFreeSpace` and `fs.attributes` (created/modified), each in a `pcall` so a
+  CC version without one of them still answers. A missing path is not an error: `exists: false`.
+- `cc_delete(path, recursive=False)`: refuses the root directory (`""`, `/`, `a/..`, or anything above the root)
+  before sending and again on the computer, a missing path (`not_found`), a read-only one (`read_only`) and a
+  non-empty directory unless `recursive=True` (`not_empty`). A recursive delete reports how many files,
+  subdirectories and bytes it removed.
+- `cc_move(src, dst)` / `cc_copy(src, dst)`: `dst` is the new full path. It must not exist (`exists`: CC's `fs.move`
+  and `fs.copy` never overwrite); its missing parent folders are created; a read-only destination (or a read-only
+  source of a move) is refused. Copying out of `rom/` works.
+- `cc_mkdir(path)`: `fs.makeDir`, parents included. An existing directory is success (`directory already exists`);
+  an existing file is `exists`.
+
+Read-only means "on a read-only mount" (`rom/`, a treasure disk): the tools ask `fs.isReadOnly` about the root folder
+of the mount that holds the path (or, for a path that does not exist yet, its nearest existing parent). CC's
+read-only paths are whole mounts, and CraftOS-PC's `fs.isReadOnly` wrongly answers true for writable folders created
+by `fs.makeDir("a/b")` and for new paths beside them.
+
+Text that is not valid UTF-8 (a Latin-1 file matched by `cc_grep`, odd file names) cannot go through the Unicode
+mode of `textutils.serialiseJSON`: the snippet then sends its answer byte by byte and the client decodes it back,
+so valid UTF-8 survives and only the invalid bytes become U+FFFD. Every answer is trimmed to fit one bridge message,
+and the result says when paths or matches were left out.
 
 ## Known limits
 

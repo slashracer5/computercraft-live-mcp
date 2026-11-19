@@ -1,4 +1,4 @@
-"""Lua snippet builders for the higher-level MCP tools (cc_network, cc_call, cc_batch, cc_push).
+"""Lua snippet builders for the higher-level MCP tools (cc_network, cc_call, cc_batch, cc_push, the file-system tools).
 
 They run through the ordinary `exec` op, so the in-game bridge.lua needs no change. Every snippet
 returns ONE JSON string (textutils.serialiseJSON) so the Python side can parse it back.
@@ -166,6 +166,309 @@ def push_finalise_code(target: str, part: str) -> str:
 def push_discard_code(part: str) -> str:
     """Delete a leftover `part` file (never a directory)."""
     return PUSH_DISCARD % {"part": json_literal(part)}
+
+
+# ---------------------------------------------------------------------------------- file-system tools
+# cc_find / cc_grep / cc_stat (read-only) and cc_delete / cc_move / cc_copy / cc_mkdir. Each snippet starts with
+# FS_PRELUDE and answers { ok = true, ... } or { ok = false, reason = ... }; bridge_client turns reasons into errors.
+#   done(t, list)  encodes t as UTF-8 JSON, or byte-wise with t.bytewise set when some text is not valid UTF-8
+#                  (parse_text_json decodes it back), and drops the tail of `list` (setting t.cut) until the reply
+#                  fits one bridge message: the bridge cannot shorten return values itself.
+#   tick()         yields every 200 ms, so a long walk neither trips CC's "too long without yielding" abort nor
+#                  holds up cc_cancel and the request's timeout timer.
+#   outside(p)     true for the root directory and anything above it.
+#   read_only(p)   whether p (existing or not) is on a read-only mount: fs.isReadOnly of the root folder of the
+#                  mount holding p's nearest existing parent. CC's read-only paths are whole mounts (rom/, treasure
+#                  disks), and CraftOS-PC's fs.isReadOnly answers true for writable folders made by fs.makeDir("a/b")
+#                  and for new paths beside them.
+# Placeholders are %-format fields; the Lua code itself must not contain a bare percent sign.
+FS_PRELUDE = r"""
+local REPLY_LIMIT = 100000
+local function encode(t)
+  t.bytewise = nil
+  local ok, s = pcall(textutils.serialiseJSON, t, { unicode_strings = true })
+  if ok then return s end
+  t.bytewise = true
+  return textutils.serialiseJSON(t)
+end
+local function done(t, list)
+  local s = encode(t)
+  while list and #list > 0 do
+    local size = #textutils.serialiseJSON(textutils.serialise(s)) -- as the bridge will send it
+    if size <= REPLY_LIMIT then break end
+    local keep = math.min(#list - 1, math.floor(#list * REPLY_LIMIT / size * 0.95))
+    for i = #list, keep + 1, -1 do list[i] = nil end
+    t.cut = true
+    s = encode(t)
+  end
+  return s
+end
+local last_yield = os.epoch("utc")
+local function tick()
+  if os.epoch("utc") - last_yield >= 200 then
+    os.queueEvent("cc_mcp_yield")
+    os.pullEvent("cc_mcp_yield")
+    last_yield = os.epoch("utc")
+  end
+end
+local function outside(p)
+  local n = fs.combine("", p)
+  return n == "" or n == ".." or n:sub(1, 3) == "../"
+end
+local function read_only(p)
+  p = fs.combine("", p)
+  while p ~= "" and not fs.exists(p) do p = fs.getDir(p) end
+  local drive = fs.getDrive(p)
+  while p ~= "" and fs.getDrive(fs.getDir(p)) == drive do p = fs.getDir(p) end
+  return fs.isReadOnly(p)
+end
+"""
+
+FIND = r"""
+local pattern, limit = %(pattern)s, %(limit)d
+local ok, found = pcall(fs.find, pattern)
+if not ok then return done({ ok = false, reason = "failed", message = tostring(found) }) end
+table.sort(found)
+local out = { ok = true, total = #found, limit = limit, entries = {} }
+for i = 1, math.min(#found, limit) do
+  local p = found[i]
+  local entry = { path = p, isDir = fs.isDir(p) }
+  if not entry.isDir then
+    local okS, size = pcall(fs.getSize, p)
+    if okS then entry.size = size end
+  end
+  out.entries[i] = entry
+  tick()
+end
+return done(out, out.entries)
+"""
+
+GREP = r"""
+local pattern, root, plain, limit, include_rom = %(pattern)s, %(root)s, %(plain)s, %(limit)d, %(include_rom)s
+local deadline = os.epoch("utc") + %(budget_ms)d
+local WIDTH = 200
+if not plain then -- most malformed patterns fail on any subject; the rest are caught line by line below
+  local ok, err = pcall(string.find, "", pattern)
+  if not ok then return done({ ok = false, reason = "bad_pattern", message = tostring(err) }) end
+end
+if not fs.exists(root) then return done({ ok = false, reason = "not_found" }) end
+root = fs.combine("", root)
+local skip_rom = not include_rom and root ~= "rom" and root:sub(1, 4) ~= "rom/"
+local out = { ok = true, matches = {}, files = 0, binary = 0, unreadable = 0, limit = limit }
+local stop, bad_pattern
+local function clip(line, s) -- long lines: WIDTH bytes around the match, cut on character boundaries
+  if #line <= WIDTH then return line end
+  local from = math.max(1, math.min(s - 60, #line - WIDTH + 1))
+  local to = from + WIDTH - 1
+  local text = line:sub(from, to)
+  if from > 1 then text = "..." .. text:gsub("^[\128-\191]+", "") end
+  if to < #line then text = text:gsub("[\192-\255][\128-\191]*$", "") .. "..." end
+  return text
+end
+local function search(path)
+  tick()
+  if os.epoch("utc") >= deadline then stop = "time" return end
+  local h = fs.open(path, "rb")
+  if not h then out.unreadable = out.unreadable + 1 return end
+  local data = h.readAll() or ""
+  h.close()
+  out.files = out.files + 1
+  if data:sub(1, 1024):find("\0", 1, true) then out.binary = out.binary + 1 return end
+  local pos, n, since, len = 1, 0, 0, #data
+  while pos <= len do
+    local e = data:find("\n", pos, true) or len + 1
+    local line = data:sub(pos, e - 1)
+    pos, n, since = e + 1, n + 1, since + 1
+    if line:sub(-1) == "\r" then line = line:sub(1, -2) end
+    local ok, s = true, nil
+    if plain then s = line:find(pattern, 1, true) else ok, s = pcall(string.find, line, pattern) end
+    if not ok then stop, bad_pattern = "bad_pattern", tostring(s) return end
+    if s then
+      out.matches[#out.matches + 1] = { path = path, line = n, text = clip(line, s) }
+      if #out.matches >= limit then stop = "limit" return end
+    end
+    if since >= 500 then
+      since = 0
+      tick()
+      if os.epoch("utc") >= deadline then stop = "time" return end
+    end
+  end
+end
+local function walk(dir)
+  local ok, names = pcall(fs.list, dir)
+  if not ok then out.unreadable = out.unreadable + 1 return end
+  table.sort(names)
+  for _, name in ipairs(names) do
+    if stop then return end
+    local full = fs.combine(dir, name)
+    if skip_rom and full == "rom" then
+      out.rom_skipped = true
+    elseif fs.isDir(full) then
+      walk(full)
+    else
+      search(full)
+    end
+  end
+end
+if fs.isDir(root) then walk(root) else search(root) end
+if bad_pattern then return done({ ok = false, reason = "bad_pattern", message = bad_pattern }) end
+out.stopped = stop
+return done(out, out.matches)
+"""
+
+STAT = r"""
+local path = %(path)s
+local out = { ok = true, exists = fs.exists(path) }
+if not out.exists then return done(out) end
+local function try(f, ...)
+  if type(f) ~= "function" then return nil end
+  local ok, v = pcall(f, ...)
+  if ok then return v end
+end
+out.isDir = fs.isDir(path)
+out.isReadOnly = read_only(path)
+if out.isDir then
+  local names = try(fs.list, path)
+  if names then out.entries = #names end
+else
+  out.size = try(fs.getSize, path)
+end
+out.drive = try(fs.getDrive, path)
+out.capacity = try(fs.getCapacity, path)
+out.free = try(fs.getFreeSpace, path)
+local attr = try(fs.attributes, path)
+if type(attr) == "table" then
+  out.created = attr.created
+  out.modified = attr.modified or attr.modification
+end
+return done(out)
+"""
+
+DELETE = r"""
+local path, recursive = %(path)s, %(recursive)s
+if outside(path) then return done({ ok = false, reason = "root" }) end
+if not fs.exists(path) then return done({ ok = false, reason = "not_found" }) end
+if read_only(path) then return done({ ok = false, reason = "read_only" }) end
+local out = { ok = true, path = fs.combine("", path), isDir = fs.isDir(path) }
+if out.isDir then
+  local names = fs.list(path)
+  if #names > 0 and not recursive then return done({ ok = false, reason = "not_empty", entries = #names }) end
+  out.files, out.dirs, out.bytes = 0, 0, 0
+  local function count(dir)
+    for _, name in ipairs(fs.list(dir)) do
+      local full = fs.combine(dir, name)
+      if fs.isDir(full) then
+        out.dirs = out.dirs + 1
+        count(full)
+      else
+        out.files = out.files + 1
+        out.bytes = out.bytes + fs.getSize(full)
+      end
+      tick()
+    end
+  end
+  count(path)
+else
+  out.size = fs.getSize(path)
+end
+local ok, err = pcall(fs.delete, path)
+if not ok then return done({ ok = false, reason = "failed", message = tostring(err) }) end
+if fs.exists(path) then return done({ ok = false, reason = "failed", message = "it still exists after fs.delete" }) end
+return done(out)
+"""
+
+TRANSFER = r"""
+local src, dst, move = %(src)s, %(dst)s, %(move)s
+if outside(src) or outside(dst) then return done({ ok = false, reason = "root" }) end
+if not fs.exists(src) then return done({ ok = false, reason = "not_found" }) end
+if fs.exists(dst) then return done({ ok = false, reason = "exists" }) end
+if move and read_only(src) then return done({ ok = false, reason = "read_only", which = "src" }) end
+if read_only(dst) then return done({ ok = false, reason = "read_only", which = "dst" }) end
+local out = { ok = true, from = fs.combine("", src), to = fs.combine("", dst), isDir = fs.isDir(src) }
+if not out.isDir then out.size = fs.getSize(src) end
+local ok, err = pcall(move and fs.move or fs.copy, src, dst)
+if not ok then return done({ ok = false, reason = "failed", message = tostring(err) }) end
+return done(out)
+"""
+
+MKDIR = r"""
+local path = %(path)s
+if outside(path) then return done({ ok = false, reason = "root" }) end
+local out = { ok = true, path = fs.combine("", path), existed = fs.exists(path) }
+if out.existed then
+  if fs.isDir(path) then return done(out) end
+  return done({ ok = false, reason = "exists" })
+end
+if read_only(path) then return done({ ok = false, reason = "read_only" }) end
+local ok, err = pcall(fs.makeDir, path)
+if not ok then return done({ ok = false, reason = "failed", message = tostring(err) }) end
+return done(out)
+"""
+
+
+def _lua_bool(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def find_code(pattern: str, limit: int) -> str:
+    """fs.find(pattern), sorted; at most `limit` entries (path, isDir, size) plus the total count."""
+    return FS_PRELUDE + FIND % {"pattern": json_literal(pattern), "limit": limit}
+
+
+def grep_code(pattern: str, root: str, plain: bool, limit: int, include_rom: bool, budget_ms: int) -> str:
+    """Search the files under `root` (or the file `root`) line by line; stops after `limit` matches or `budget_ms`."""
+    return FS_PRELUDE + GREP % {
+        "pattern": json_literal(pattern),
+        "root": json_literal(root),
+        "plain": _lua_bool(plain),
+        "limit": limit,
+        "include_rom": _lua_bool(include_rom),
+        "budget_ms": budget_ms,
+    }
+
+
+def stat_code(path: str) -> str:
+    """exists, isDir, size or entry count, isReadOnly, drive, capacity, free space, created/modified (pcall'd)."""
+    return FS_PRELUDE + STAT % {"path": json_literal(path)}
+
+
+def delete_code(path: str, recursive: bool) -> str:
+    """fs.delete after checks: never the root, a missing or read-only path, or (unless recursive) a non-empty dir."""
+    return FS_PRELUDE + DELETE % {"path": json_literal(path), "recursive": _lua_bool(recursive)}
+
+
+def transfer_code(src: str, dst: str, move: bool) -> str:
+    """fs.move or fs.copy after checks: `dst` must not exist (CC never overwrites), read-only paths are refused."""
+    return FS_PRELUDE + TRANSFER % {"src": json_literal(src), "dst": json_literal(dst), "move": _lua_bool(move)}
+
+
+def mkdir_code(path: str) -> str:
+    """fs.makeDir (parents included); an existing directory is success with existed=true."""
+    return FS_PRELUDE + MKDIR % {"path": json_literal(path)}
+
+
+def parse_text_json(res: dict) -> dict | None:
+    """parse_returned_json for the file-system snippets: the JSON object they returned, or None.
+
+    A reply flagged `bytewise` held text that is not valid UTF-8 and was sent one byte per character: decode it
+    back, so valid UTF-8 survives and only the invalid bytes become U+FFFD."""
+    doc = parse_returned_json(res)
+    if not isinstance(doc, dict):
+        return None
+    return _redecode(doc) if doc.get("bytewise") is True else doc
+
+
+def _redecode(value):
+    if isinstance(value, str):
+        try:
+            return value.encode("latin-1").decode("utf-8", "replace")
+        except UnicodeEncodeError:  # not byte-wise after all
+            return value
+    if isinstance(value, list):
+        return [_redecode(item) for item in value]
+    if isinstance(value, dict):
+        return {_redecode(key): _redecode(item) for key, item in value.items()}
+    return value
 
 
 def parse_returned_json(res: dict):

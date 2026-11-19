@@ -148,6 +148,77 @@ SNAPSHOTS = [
         "OK [0.25s]\nuploaded 120001 chars in 3 chunk(s); remote size 120003 bytes",
     ),
     ("pull", {"ok": True, "bytes": 120003, "path": "/tmp/pulled.txt"}, "OK\nsaved 120003 bytes to /tmp/pulled.txt"),
+    (
+        "find",
+        {
+            "ok": True,
+            "total": 3,
+            "limit": 200,
+            "entries": [
+                {"path": "programs", "isDir": True},
+                {"path": "programs/a.lua", "isDir": False, "size": 12},
+                {"path": "startup.lua", "isDir": False, "size": 1234},
+            ],
+            "duration": 0.05,
+        },
+        "OK [0.05s]\n3 matching path(s)\n" + block("d programs/\n    12 programs/a.lua\n  1234 startup.lua", "paths"),
+    ),
+    (
+        "grep",
+        {
+            "ok": True,
+            "matches": [
+                {"path": "startup.lua", "line": 3, "text": 'shell.run("bridge")'},
+                {"path": "lib/x.lua", "line": 10, "text": "...bridge..."},
+            ],
+            "files": 12,
+            "binary": 1,
+            "unreadable": 0,
+            "limit": 200,
+            "rom_skipped": True,
+        },
+        "OK\n2 match(es) in 12 file(s); rom/ skipped (include_rom=True searches it); 1 binary file(s) skipped\n"
+        + block('startup.lua:3: shell.run("bridge")\nlib/x.lua:10: ...bridge...', "matches"),
+    ),
+    (
+        "stat",
+        {
+            "ok": True,
+            "exists": True,
+            "isDir": False,
+            "size": 42,
+            "isReadOnly": False,
+            "drive": "hdd",
+            "capacity": 1000000,
+            "free": 999000,
+            "created": 1723828684000,
+            "modified": 1794975928000,
+        },
+        "OK\nexists: true\ntype: file, 42 bytes\nread-only: false\ndrive: "
+        + block("hdd", "drive", inline=True)
+        + "\ncapacity: 1000000 bytes\nfree: 999000 bytes\ncreated: 2024-08-16 17:18:04 UTC"
+        + "\nmodified: 2026-11-18 04:25:28 UTC",
+    ),
+    (
+        "delete",
+        {"ok": True, "path": "logs", "isDir": True, "files": 3, "dirs": 1, "bytes": 120},
+        "OK\ndeleted directory (3 file(s), 1 subdirectory(s), 120 bytes): " + block("logs", "path", inline=True),
+    ),
+    (
+        "move",
+        {"ok": True, "from": "a.lua", "to": "b/a.lua", "isDir": False, "size": 42},
+        "OK\nmoved file (42 bytes): " + block("a.lua -> b/a.lua", "path", inline=True),
+    ),
+    (
+        "copy",
+        {"ok": True, "from": "rom/programs", "to": "progs", "isDir": True},
+        "OK\ncopied directory: " + block("rom/programs -> progs", "path", inline=True),
+    ),
+    (
+        "mkdir",
+        {"ok": True, "path": "a/b", "existed": False},
+        "OK\ncreated directory: " + block("a/b", "path", inline=True),
+    ),
 ]
 
 

@@ -159,6 +159,13 @@ async def mcp_checks():
             "cc_batch",
             "cc_push",
             "cc_pull",
+            "cc_find",
+            "cc_grep",
+            "cc_stat",
+            "cc_delete",
+            "cc_move",
+            "cc_copy",
+            "cc_mkdir",
         }
         check("MCP lists all cc_* tools", want <= names, str(want - names))
 
@@ -301,6 +308,228 @@ async def mcp_checks():
         t = await text("cc_push", {"local_path": str(Path(sys.executable)), "remote_path": "no.txt"})
         check("cc_push refuses files outside the allowed folders", "outside the allowed folders" in t, t)
 
+        await fs_tool_checks(client, text)
+
+
+def lines_of(t, source):
+    """The lines inside the first block of `source` in a tool result."""
+    m = re.search(rf'<untrusted source="{source}" id="([0-9a-f]{{8}})">\n(.*?)\n</untrusted id="\1">', t, re.S)
+    return m.group(2).splitlines() if m else []
+
+
+async def fs_tool_checks(client, text):
+    """cc_find / cc_grep / cc_stat and cc_mkdir / cc_copy / cc_move / cc_delete against the emulator's files (#14)."""
+    hints = {tool.name: tool.annotations.model_dump(by_alias=True) for tool in (await client.list_tools()).tools}
+    check(
+        "file-system tools are annotated read-only / destructive / additive",
+        all(hints[n]["readOnlyHint"] is True for n in ("cc_find", "cc_grep", "cc_stat"))
+        and all(hints[n]["destructiveHint"] is True for n in ("cc_delete", "cc_move"))
+        and all(
+            hints[n]["readOnlyHint"] is False and hints[n]["destructiveHint"] is False for n in ("cc_copy", "cc_mkdir")
+        ),
+        str({n: hints.get(n) for n in ("cc_find", "cc_delete", "cc_copy")}),
+    )
+    setup = (
+        'fs.makeDir("fsx/sub") '
+        'local function w(p, s) local h = fs.open(p, "wb") h.write(s) h.close() end '
+        'w("fsx/a.lua", "local x = 1\\nprint(\'needle one\')\\n-- NEEDLE upper\\n") '
+        'w("fsx/bin.dat", "needle\\0\\1\\2") '
+        'w("fsx/long.txt", ("x"):rep(500) .. "needle" .. ("y"):rep(500) .. "\\n") '
+        'w("fsx/latin.txt", "caf\\233 needle\\n") '
+        "return 'made'"
+    )
+    t = await text("cc_exec", {"code": setup})
+    check("fs test files created", "made" in t, t)
+    await text("cc_write", {"path": "fsx/sub/b.txt", "content": "héllo needle ✓\r\nno match\r\n"})
+
+    # ---- cc_find
+    t = await text("cc_find", {"pattern": "fsx/*"})
+    found = lines_of(t, "paths")
+    check(
+        "cc_find lists sizes and directories, sorted",
+        "5 matching path(s)" in t
+        and found[-1] == "d fsx/sub/"
+        and [line.split()[-1] for line in found[:-1]] == ["fsx/a.lua", "fsx/bin.dat", "fsx/latin.txt", "fsx/long.txt"]
+        and found[0].split()[0] == "48",
+        t,
+    )
+    t = await text("cc_find", {"pattern": "fsx/*/*.txt"})
+    check("cc_find matches one segment per *", lines_of(t, "paths") == ["  29 fsx/sub/b.txt"], t)
+    t = await text("cc_find", {"pattern": "fsx/*", "max_results": 2})
+    check("cc_find caps at max_results and says so", "2 of 5 matching paths shown (max_results=2)" in t, t)
+    t = await text("cc_find", {"pattern": "nothing/*"})
+    check("cc_find with no match", t.startswith("OK") and "0 matching path(s)" in t, t)
+
+    # ---- cc_grep
+    t = await text("cc_grep", {"pattern": "needle", "path": "fsx"})
+    got = lines_of(t, "matches")
+    long_line = next((line for line in got if line.startswith("fsx/long.txt:1: ")), "")
+    check(
+        "cc_grep returns path:line: text, skips binary files, keeps UTF-8",
+        "4 match(es) in 5 file(s); 1 binary file(s) skipped" in t
+        and "fsx/a.lua:2: print('needle one')" in got
+        and "fsx/sub/b.txt:1: héllo needle ✓" in got
+        and not any("NEEDLE" in line or "bin.dat" in line for line in got),
+        t,
+    )
+    check("cc_grep decodes a non-UTF-8 line byte-wise", "fsx/latin.txt:1: caf� needle" in got, t)
+    check(
+        "cc_grep shortens a long line around the match",
+        long_line.startswith("fsx/long.txt:1: ...x") and long_line.endswith("y...") and len(long_line) < 230,
+        long_line,
+    )
+    t = await text("cc_grep", {"pattern": "^%-%- NEEDLE", "path": "fsx", "plain": False})
+    check("cc_grep with a Lua pattern", lines_of(t, "matches") == ["fsx/a.lua:3: -- NEEDLE upper"], t)
+    t = await text("cc_grep", {"pattern": "[a", "path": "fsx", "plain": False})
+    check("cc_grep reports an invalid Lua pattern", "  error: bad_request" in t and "malformed pattern" in t, t)
+    t = await text("cc_grep", {"pattern": "needle", "path": "nowhere"})
+    check("cc_grep on a missing path is not_found", "  error: not_found" in t and "hint:" in t, t)
+    t = await text("cc_grep", {"pattern": "needle", "path": "fsx/a.lua"})
+    check("cc_grep searches a single file", lines_of(t, "matches") == ["fsx/a.lua:2: print('needle one')"], t)
+    t = await text("cc_grep", {"pattern": "needle", "path": "fsx", "max_matches": 2})
+    check(
+        "cc_grep stops at max_matches",
+        len(lines_of(t, "matches")) == 2 and "stopped at max_matches=2: there may be more" in t,
+        t,
+    )
+    t = await text("cc_grep", {"pattern": "shell.run"})
+    got = lines_of(t, "matches")
+    check(
+        "cc_grep over everything skips rom/",
+        "rom/ skipped" in t
+        and 'startup.lua:1: shell.run("bridge")' in got
+        and not any(g.startswith("rom/") for g in got),
+        t,
+    )
+    t = await text("cc_grep", {"pattern": "shell.run", "path": "rom/programs", "max_matches": 3})
+    got = lines_of(t, "matches")
+    check(
+        "cc_grep inside rom/ searches it",
+        len(got) == 3 and all(g.startswith("rom/programs/") for g in got) and "skipped" not in t,
+        t,
+    )
+    t = await text("cc_grep", {"pattern": "shell.run", "include_rom": True, "max_matches": 1000})
+    check("cc_grep include_rom=True", any(g.startswith("rom/") for g in lines_of(t, "matches")), t[:500])
+    # 25 files, each fs.open made to take 100 ms without yielding: the search has to yield and to watch the clock
+    slow = (
+        'fs.makeDir("fsx/slow") for i = 1, 25 do local h = fs.open(("fsx/slow/f%02d.txt"):format(i), "w") '
+        'h.write("needle\\n") h.close() end '
+        "_G.__realopen = fs.open "
+        "fs.open = function(...) local t = os.epoch('utc') + 100 while os.epoch('utc') < t do end "
+        "return __realopen(...) end return 'slowed'"
+    )
+    await text("cc_exec", {"code": slow})
+    grep = cc_lua.grep_code("needle", "fsx/slow", True, 1000, False, 30000)
+    counter = (
+        "local n, s = 0 parallel.waitForAny(function() while true do os.pullEvent('cc_mcp_yield') n = n + 1 end end, "
+        f"function() s = load({cc_lua.long_string(grep)}, '=grep', 't', _ENV)() end) return n, s"
+    )
+    r = exec_(counter, timeout=30)
+    rets = r.get("returns") or ["0"]
+    doc = cc_lua.parse_text_json({"returns": rets[1:]}) or {}
+    check(
+        "cc_grep yields while it searches (2.5 s of work)",
+        int(rets[0]) >= 5 and doc.get("files") == 25 and len(doc.get("matches") or []) == 25,
+        str(r)[:300],
+    )
+    started = time.time()
+    t = await text("cc_grep", {"pattern": "needle", "path": "fsx/slow", "timeout": 2})
+    check(
+        "cc_grep stops before its timeout and returns what it found",
+        t.startswith("OK")
+        and "stopped early to answer within the timeout" in t
+        and 3 <= len(lines_of(t, "matches")) < 25
+        and time.time() - started < 4,
+        t,
+    )
+    await text("cc_exec", {"code": "fs.open = __realopen return 'restored'"})
+
+    # ---- cc_stat
+    t = await text("cc_stat", {"path": "fsx/a.lua"})
+    check(
+        "cc_stat on a file",
+        all(s in plain(t) for s in ("exists: true", "type: file, 48 bytes", "read-only: false", "drive: hdd", "free: "))
+        and "modified: 20" in t,
+        t,
+    )
+    t = await text("cc_stat", {"path": "fsx"})
+    check("cc_stat on a directory", "type: directory, 6 item(s)" in t, t)
+    t = await text("cc_stat", {"path": "rom/startup.lua"})
+    check("cc_stat on rom/", "read-only: true" in t and "drive: rom" in plain(t), t)
+    t = await text("cc_stat", {"path": "nowhere"})
+    check("cc_stat on a missing path", t.startswith("OK") and plain(t).endswith("exists: false"), t)
+
+    # ---- cc_mkdir / cc_copy / cc_move / cc_delete
+    t = await text("cc_mkdir", {"path": "fsx/new/deep"})
+    check("cc_mkdir creates parents", "created directory: fsx/new/deep" in plain(t), t)
+    t = await text("cc_mkdir", {"path": "fsx/new/deep"})
+    check("cc_mkdir on an existing directory", t.startswith("OK") and "directory already exists" in t, t)
+    t = await text("cc_mkdir", {"path": "fsx/a.lua"})
+    check("cc_mkdir on a file is exists", "  error: exists" in t, t)
+    t = await text("cc_copy", {"src": "fsx/a.lua", "dst": "fsx/new/a2.lua"})
+    check("cc_copy a file", "copied file (48 bytes): fsx/a.lua -> fsx/new/a2.lua" in plain(t), t)
+    t = await text("cc_copy", {"src": "fsx/sub/b.txt", "dst": "fsx/new/a2.lua"})
+    r = exec_("return fs.getSize('fsx/new/a2.lua')")
+    check("cc_copy never overwrites", "  error: exists" in t and r.get("returns") == ["48"], f"{t} {r}")
+    t = await text("cc_copy", {"src": "rom/startup.lua", "dst": "fsx/from_rom.lua"})
+    check("cc_copy out of rom/", t.startswith("OK") and "copied file" in t, t)
+    t = await text("cc_copy", {"src": "fsx/a.lua", "dst": "rom/new/a.lua"})
+    check("cc_copy into rom/ is read_only", "  error: read_only" in t and "'rom/new/a.lua' is read-only" in t, t)
+    t = await text("cc_copy", {"src": "nowhere", "dst": "fsx/x"})
+    check("cc_copy of a missing path is not_found", "  error: not_found" in t, t)
+    t = await text("cc_copy", {"src": "fsx/sub", "dst": "fsx/sub/inner"})
+    check("cc_copy into itself is CC's error", "  error: runtime" in t and "inside itself" in t, t)
+    t = await text("cc_move", {"src": "fsx/new/a2.lua", "dst": "fsx/moved/a3.lua"})
+    r = exec_("return fs.exists('fsx/new/a2.lua'), fs.exists('fsx/moved/a3.lua')")
+    check(
+        "cc_move a file into a new folder",
+        "moved file (48 bytes): fsx/new/a2.lua -> fsx/moved/a3.lua" in plain(t)
+        and r.get("returns") == ["false", "true"],
+        f"{t} {r}",
+    )
+    t = await text("cc_move", {"src": "fsx/a.lua", "dst": "fsx/moved/a3.lua"})
+    check("cc_move never overwrites", "  error: exists" in t, t)
+    t = await text("cc_move", {"src": "rom/startup.lua", "dst": "fsx/x.lua"})
+    check("cc_move out of rom/ is read_only", "  error: read_only" in t, t)
+    t = await text("cc_move", {"src": "fsx/new", "dst": "fsx/new2"})
+    check("cc_move a directory", "moved directory: fsx/new -> fsx/new2" in plain(t), t)
+    t = await text("cc_delete", {"path": "fsx/sub"})
+    r = exec_("return fs.exists('fsx/sub/b.txt')")
+    check(
+        "cc_delete refuses a non-empty directory without recursive",
+        "  error: not_empty" in t and r.get("returns") == ["true"],
+        f"{t} {r}",
+    )
+    t = await text("cc_delete", {"path": "fsx/sub", "recursive": True})
+    check(
+        "cc_delete recursive=True reports what it removed",
+        "deleted directory (1 file(s), 0 subdirectory(s), 29 bytes)" in t,
+        t,
+    )
+    t = await text("cc_delete", {"path": "fsx/new2/deep"})
+    check("cc_delete an empty directory", "deleted directory (0 file(s)" in t, t)
+    t = await text("cc_delete", {"path": "fsx/moved/a3.lua"})
+    check("cc_delete a file", "deleted file (48 bytes): fsx/moved/a3.lua" in plain(t), t)
+    t = await text("cc_delete", {"path": "nowhere"})
+    check("cc_delete of a missing path is not_found", "  error: not_found" in t, t)
+    t = await text("cc_delete", {"path": "rom/startup.lua"})
+    check("cc_delete in rom/ is read_only", "  error: read_only" in t, t)
+    t = await text("cc_delete", {"path": "/", "recursive": True})
+    check("cc_delete refuses the root", "  error: bad_request" in t and "root directory" in t, t)
+    refused = [
+        cc_lua.parse_text_json(exec_(code))
+        for code in (cc_lua.delete_code("/", True), cc_lua.delete_code("a/../..", True), cc_lua.mkdir_code(".."))
+    ]
+    r = exec_("return fs.exists('startup.lua'), fs.exists('bridge.lua')")
+    check(
+        "the snippets refuse the root on the computer too",
+        all(d == {"ok": False, "reason": "root"} for d in refused) and r.get("returns") == ["true", "true"],
+        f"{refused} {r}",
+    )
+    t = await text("cc_delete", {"path": "fsx", "recursive": True})
+    r = exec_("return fs.exists('fsx')")
+    check("cc_delete removes the whole test tree", t.startswith("OK") and r.get("returns") == ["false"], f"{t} {r}")
+
 
 def cut_push_checks():
     """Cutting the connection partway through a push leaves the original remote file untouched (#13)."""
@@ -409,6 +638,34 @@ def ccctl_checks():
     rc, t = ccctl("batch", json.dumps(calls), "--sequential")
     check("ccctl batch", rc == 0 and '-> 5, "five"' in plain(t) and "-> 2" in plain(t), f"rc={rc} {t}")
     exec_(RESTORE_PERIPHERALS)
+
+    # file-system subcommands (#14); startup.lua is `shell.run("bridge")`, 19 bytes
+    rc, t = ccctl("mkdir", "cli_fs/a")
+    check("ccctl mkdir", rc == 0 and "created directory: cli_fs/a" in plain(t), f"rc={rc} {t}")
+    rc, t = ccctl("cp", "startup.lua", "cli_fs/a/s.lua")
+    check("ccctl cp", rc == 0 and "copied file (19 bytes)" in t, f"rc={rc} {t}")
+    rc, t = ccctl("cp", "startup.lua", "cli_fs/a/s.lua")
+    check("ccctl cp onto an existing file exits 1", rc == 1 and "  error: exists" in t, f"rc={rc} {t}")
+    rc, t = ccctl("mv", "cli_fs/a/s.lua", "cli_fs/s2.lua")
+    check("ccctl mv", rc == 0 and "moved file" in t, f"rc={rc} {t}")
+    rc, t = ccctl("find", "cli_fs/*")
+    check("ccctl find", rc == 0 and lines_of(t, "paths") == ["d cli_fs/a/", "  19 cli_fs/s2.lua"], f"rc={rc} {t}")
+    rc, t = ccctl("grep", "bridge", "cli_fs")
+    check("ccctl grep", rc == 0 and lines_of(t, "matches") == ['cli_fs/s2.lua:1: shell.run("bridge")'], f"rc={rc} {t}")
+    rc, t = ccctl("grep", "[a", "cli_fs", "--lua")
+    check("ccctl grep --lua with a bad pattern exits 1", rc == 1 and "  error: bad_request" in t, f"rc={rc} {t}")
+    rc, t = ccctl("stat", "cli_fs/s2.lua")
+    check("ccctl stat", rc == 0 and "type: file, 19 bytes" in t, f"rc={rc} {t}")
+    rc, t = ccctl("rm", "cli_fs")
+    check("ccctl rm of a non-empty directory exits 1", rc == 1 and "  error: not_empty" in t, f"rc={rc} {t}")
+    rc, t = ccctl("rm", "cli_fs", "--recursive")
+    check(
+        "ccctl rm --recursive",
+        rc == 0 and "deleted directory (1 file(s), 1 subdirectory(s), 19 bytes)" in t,
+        f"rc={rc} {t}",
+    )
+    rc, t = ccctl("rm", "/")
+    check("ccctl rm / exits 1", rc == 1 and "  error: bad_request" in t, f"rc={rc} {t}")
 
     call("write", path="bridge.lua", data="\n-- stale copy\n", append=True)  # still valid Lua if the update fails
     rc, t = ccctl("update-bridge")
