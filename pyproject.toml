@@ -38,7 +38,7 @@ ccctl = "computercraft_live_mcp.ccctl:cli"                            # command-
 packages = ["src/computercraft_live_mcp"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "docs", "examples", "README.md", "LICENSE", "SECURITY.md"]
+include = ["src", "tests", "docs", "examples", "README.md", "LICENSE", "SECURITY.md", "CHANGELOG.md", "CONTRIBUTING.md"]
 
 [tool.ruff]
 line-length = 120

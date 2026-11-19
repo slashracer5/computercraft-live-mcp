@@ -58,7 +58,7 @@ def request(path: str, body: dict | None = None) -> dict:
         return {"ok": False, "error": {"kind": "relay_unreachable", "message": f"{config.url}: {e}"}}
 
 
-def call(op: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT, **args) -> dict:
+def call(op: str, computer: int | str | None = None, timeout: float = DEFAULT_TIMEOUT, **args) -> dict:
     body = {"op": op, "timeout": timeout, **{k: v for k, v in args.items() if v is not None}}
     if computer is not None:
         body["computer"] = computer
@@ -69,13 +69,13 @@ def call(op: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT,
 CALL_SHAPE = 'each call needs {"peripheral": name, "method": name, "args": [...]}'
 
 
-def network(methods: bool = False, computer: int | None = None, timeout: float = NETWORK_TIMEOUT) -> dict:
+def network(methods: bool = False, computer: int | str | None = None, timeout: float = NETWORK_TIMEOUT) -> dict:
     """Inventory every peripheral the computer can see (cc_network); format with format_result("network", ...)."""
     return call("exec", computer, timeout, code=cc_lua.network_code(methods))
 
 
 def run_calls(
-    calls: list, parallel: bool = True, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT
+    calls: list, parallel: bool = True, computer: int | str | None = None, timeout: float = DEFAULT_TIMEOUT
 ) -> dict:
     """Run peripheral calls [{"peripheral", "method", "args"}] in one exec (cc_call / cc_batch); format with
     format_result("calls", res, calls=calls). A malformed list fails with bad_request before anything is sent."""
@@ -112,7 +112,7 @@ FS_FIELDS = {  # what each result keeps from the snippet's JSON (anything else i
 
 
 def fs_find(
-    pattern: str, max_results: int = 200, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT
+    pattern: str, max_results: int = 200, computer: int | str | None = None, timeout: float = DEFAULT_TIMEOUT
 ) -> dict:
     """Paths matching a fs.find glob (`*` within one path segment), sorted, at most max_results of them."""
     if not isinstance(pattern, str) or not pattern.strip():
@@ -127,7 +127,7 @@ def fs_grep(
     plain: bool = True,
     max_matches: int = 200,
     include_rom: bool = False,
-    computer: int | None = None,
+    computer: int | str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> dict:
     """Matching lines (path, line number, text) in the files under `path`. The search stops by itself shortly before
@@ -139,13 +139,13 @@ def fs_grep(
     return _fs_request("grep", code, computer, timeout, lambda doc: _fs_failure(doc, "search", path))
 
 
-def fs_stat(path: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict:
+def fs_stat(path: str, computer: int | str | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict:
     """Whether `path` exists and, if so, what it is (see cc_lua.stat_code)."""
     return _fs_request("stat", cc_lua.stat_code(path), computer, timeout, lambda doc: _fs_failure(doc, "stat", path))
 
 
 def fs_delete(
-    path: str, recursive: bool = False, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT
+    path: str, recursive: bool = False, computer: int | str | None = None, timeout: float = DEFAULT_TIMEOUT
 ) -> dict:
     """Delete a file or directory; a non-empty directory only with recursive=True. Never the root."""
     if _outside(path):
@@ -154,24 +154,24 @@ def fs_delete(
     return _fs_request("delete", code, computer, timeout, lambda doc: _fs_failure(doc, "delete", path))
 
 
-def fs_move(src: str, dst: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict:
+def fs_move(src: str, dst: str, computer: int | str | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict:
     """Move/rename `src` to the full path `dst`, which must not exist yet."""
     return _fs_transfer("move", src, dst, computer, timeout)
 
 
-def fs_copy(src: str, dst: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict:
+def fs_copy(src: str, dst: str, computer: int | str | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict:
     """Copy `src` (recursively) to the full path `dst`, which must not exist yet."""
     return _fs_transfer("copy", src, dst, computer, timeout)
 
 
-def fs_mkdir(path: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict:
+def fs_mkdir(path: str, computer: int | str | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict:
     """Create a directory and any missing parents; an existing directory is success (existed=True)."""
     if _outside(path):
         return _bad_request(f"refusing to create {path!r}: that is the root directory (or above it)")
     return _fs_request("mkdir", cc_lua.mkdir_code(path), computer, timeout, lambda doc: _fs_failure(doc, "mkdir", path))
 
 
-def _fs_transfer(op: str, src: str, dst: str, computer: int | None, timeout: float) -> dict:
+def _fs_transfer(op: str, src: str, dst: str, computer: int | str | None, timeout: float) -> dict:
     for p in (src, dst):
         if _outside(p):
             return _bad_request(f"refusing to {op} {p!r}: that is the root directory (or above it)")
@@ -204,7 +204,7 @@ def _bad_request(message: str) -> dict:
     return {"ok": False, "error": {"kind": "bad_request", "message": message}}
 
 
-def _fs_request(op: str, code: str, computer: int | None, timeout: float, failure) -> dict:
+def _fs_request(op: str, code: str, computer: int | str | None, timeout: float, failure) -> dict:
     """Run one fs snippet; keep FS_FIELDS[op] of its answer, or turn its refusal into an error via failure(doc)."""
     res = call("exec", computer, timeout, code=code)
     if not res.get("ok"):
@@ -283,7 +283,7 @@ def _local(path: str, check_roots: bool) -> Path:
 def push_file(
     local: str,
     remote: str,
-    computer: int | None = None,
+    computer: int | str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     append: bool = False,
     *,
@@ -299,7 +299,7 @@ def push_file(
 
 
 def push_text(
-    text: str, remote: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT, append: bool = False
+    text: str, remote: str, computer: int | str | None = None, timeout: float = DEFAULT_TIMEOUT, append: bool = False
 ) -> dict:
     """Upload text in chunks that fit the relay's request limit.
 
@@ -360,14 +360,14 @@ def _push_error(kind: str, message: str) -> dict:
     return {"ok": False, "error": {"kind": kind, "message": message}}
 
 
-def _exec_json(code: str, computer: int | None, timeout: float) -> tuple[dict, dict | None]:
+def _exec_json(code: str, computer: int | str | None, timeout: float) -> tuple[dict, dict | None]:
     """Run a cc_lua snippet; returns (reply, the JSON document it returned or None)."""
     res = call("exec", computer, timeout, code=code)
     doc = cc_lua.parse_returned_json(res) if res.get("ok") else None
     return res, doc if isinstance(doc, dict) else None
 
 
-def _push_preflight(remote: str, part: str | None, need: int, computer: int | None, timeout: float) -> dict:
+def _push_preflight(remote: str, part: str | None, need: int, computer: int | str | None, timeout: float) -> dict:
     """One request before the first chunk, so a full drive, read-only path or directory fails before any write."""
     res, doc = _exec_json(cc_lua.push_preflight_code(remote, part, need), computer, timeout)
     if not res.get("ok"):
@@ -390,7 +390,9 @@ def _push_preflight(remote: str, part: str | None, need: int, computer: int | No
     return _push_error("internal", "unexpected answer from the upload check")
 
 
-def _upload_chunks(text: str, path: str, computer: int | None, timeout: float, append: bool) -> tuple[dict, int, int]:
+def _upload_chunks(
+    text: str, path: str, computer: int | str | None, timeout: float, append: bool
+) -> tuple[dict, int, int]:
     """Write `text` to `path` chunk by chunk; the first chunk truncates unless append.
 
     Returns (last reply, chars written, chunks written); stops at the first failed chunk."""
@@ -406,7 +408,7 @@ def _upload_chunks(text: str, path: str, computer: int | None, timeout: float, a
             return res, sent, chunks
 
 
-def _push_finalise(remote: str, part: str, computer: int | None, timeout: float) -> tuple[dict, str]:
+def _push_finalise(remote: str, part: str, computer: int | str | None, timeout: float) -> tuple[dict, str]:
     """Swap the finished part into place with one request. Returns (result, remote_state on failure)."""
     res, doc = _exec_json(cc_lua.push_finalise_code(remote, part), computer, timeout)
     if not res.get("ok"):  # the swap may or may not have run
@@ -429,14 +431,19 @@ def _push_finalise(remote: str, part: str, computer: int | None, timeout: float)
     return _push_error("internal", "unexpected answer from the final replace"), "unknown"
 
 
-def _discard_part(part: str, computer: int | None, timeout: float) -> bool:
+def _discard_part(part: str, computer: int | str | None, timeout: float) -> bool:
     """Best-effort delete of a part file; True when the computer confirms it is gone."""
     _, doc = _exec_json(cc_lua.push_discard_code(part), computer, timeout)
     return doc is not None and doc.get("gone") is True
 
 
 def pull_file(
-    remote: str, local: str, computer: int | None = None, timeout: float = DEFAULT_TIMEOUT, *, check_roots: bool = True
+    remote: str,
+    local: str,
+    computer: int | str | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    *,
+    check_roots: bool = True,
 ) -> dict:
     """Download a computer file to a local path. Intended for text (ASCII/UTF-8); chunk edges are byte offsets.
 

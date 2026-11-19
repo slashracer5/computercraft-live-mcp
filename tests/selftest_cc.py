@@ -19,6 +19,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from doc_tools import readme_tool_names
+
 from computercraft_live_mcp import bridge_client as bc
 from computercraft_live_mcp import cc_lua
 from computercraft_live_mcp.formatting import format_result
@@ -160,31 +162,12 @@ async def mcp_checks():
     )
     async with Client(params) as client:
         names = {t.name for t in (await client.list_tools()).tools}
-        want = {
-            "cc_computers",
-            "cc_ping",
-            "cc_exec",
-            "cc_shell",
-            "cc_read",
-            "cc_write",
-            "cc_list",
-            "cc_peripherals",
-            "cc_log",
-            "cc_cancel",
-            "cc_network",
-            "cc_call",
-            "cc_batch",
-            "cc_push",
-            "cc_pull",
-            "cc_find",
-            "cc_grep",
-            "cc_stat",
-            "cc_delete",
-            "cc_move",
-            "cc_copy",
-            "cc_mkdir",
-        }
-        check("MCP lists all cc_* tools", want <= names, str(want - names))
+        want = readme_tool_names(HERE.parent / "README.md")
+        check(
+            "MCP tools match the README table",
+            names == want,
+            f"missing from MCP: {sorted(want - names)}; extra in MCP: {sorted(names - want)}",
+        )
 
         async def text(name, args):
             r = await client.call_tool(name, args)
@@ -192,6 +175,19 @@ async def mcp_checks():
 
         t = await text("cc_ping", {})
         check("MCP cc_ping", t.startswith('OK\n<untrusted source="ping"') and plain(t).startswith("OK\nid=0"), t)
+        exec_('os.setComputerLabel("selftest-reactor")')
+        try:
+            t = await text("cc_ping", {})
+            check("MCP ping refreshes label", t.startswith("OK") and "selftest-reactor" in plain(t), t)
+            t = await text("cc_ping", {"computer": "SELFTEST-Reactor"})
+            check("MCP ping by label", plain(t).startswith("OK\nid=0"), t)
+            t = await text("cc_ping", {"computer": "selftest-unknown"})
+            check("MCP unknown label", "  error: not_connected" in t, t)
+            rc, t = ccctl("ping", "--computer", "selftest-reactor")
+            check("ccctl ping by label", rc == 0 and plain(t).startswith("OK\nid=0"), f"rc={rc} {t}")
+        finally:
+            exec_("os.setComputerLabel(nil)")
+            await text("cc_ping", {})
         t = await text("cc_computers", {})
         check(
             "MCP cc_computers",

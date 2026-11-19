@@ -255,7 +255,8 @@ def test_relay_and_client_errors(op, kind):
 
 def test_hint_snapshot():
     assert format_result("computers", {"ok": False, "error": {"kind": "no_target", "message": "choose"}}) == (
-        "ERROR\n  hint: Several computers are connected: repeat the call with computer=<id> (cc_computers lists them)."
+        "ERROR\n  hint: With several computers connected, repeat the call with computer=<id or label> "
+        "(cc_computers lists them); with none, check that the world is open and the bridge is running."
         "\n  error: no_target\n" + block("choose", "error")
     )
 
@@ -269,7 +270,8 @@ def test_duration_and_hint_header_order():
     }
     assert format_result("exec", res) == (
         "ERROR [1.25s]\n"
-        "  hint: Several computers are connected: repeat the call with computer=<id> (cc_computers lists them)."
+        "  hint: With several computers connected, repeat the call with computer=<id or label> "
+        "(cc_computers lists them); with none, check that the world is open and the bridge is running."
         "\n  error: no_target\n" + block("choose\nframe", "error") + "\nstderr:\n" + block("warning", "stderr", 2)
     )
 

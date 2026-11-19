@@ -1,6 +1,6 @@
 # Technical reference
 
-> **How to turn it on and connect: see [QUICKSTART.md](QUICKSTART.md).** This file is the technical reference.
+> **How to turn it on and connect: see [QUICKSTART.md](QUICKSTART.md).** This file covers tool usage. Message schemas, HTTP statuses and the complete error catalogue are in [PROTOCOL.md](PROTOCOL.md).
 
 Lets an AI assistant run code and read files on an in-game ComputerCraft computer, and see every error,
 including from programs a player started by hand.
@@ -21,13 +21,16 @@ MCP client --MCP (computercraft-live-mcp) / ccctl--> relay <--outbound websocket
 | `src/computercraft_live_mcp/config.py` | frozen environment configuration, cached on first use; `reset_config()` clears it |
 | `src/computercraft_live_mcp/limits.py` | message sizes, push chunk budgets, the file-system tools' reply limit and timeout defaults; tests check Lua copies |
 | `src/computercraft_live_mcp/ccctl.py` | command-line client: one subcommand per MCP tool, plus `update-bridge` |
-| `src/computercraft_live_mcp/mcp_server.py` | MCP tools: `cc_exec cc_shell cc_read cc_write cc_list cc_peripherals cc_log cc_cancel cc_ping cc_computers cc_network cc_call cc_batch cc_push cc_pull cc_find cc_grep cc_stat cc_delete cc_move cc_copy cc_mkdir` |
+| `src/computercraft_live_mcp/mcp_server.py` | MCP tools: see the [README tool table](../README.md#tools) |
 | `src/computercraft_live_mcp/cc_lua.py` | Lua snippet builders and returned-JSON parser for `cc_network` / `cc_call` / `cc_batch`, the `cc_push` check/swap steps and the file-system tools (run through `exec`) |
 | `tests/test_*.py`, `tests/conftest.py` | pytest suite: helpers, the relay with a fake computer (in-process, free ports), file transfer; strict `xfail` tests document #1 and #5 |
 | `tests/test_formatting.py` / `tests/test_formatting_clients.py` | formatter snapshots, error cases and MCP/CLI routing checks |
 | `tests/test_atomic_transfer.py` | `cc_push` / `cc_pull` atomicity against a fake computer (failed chunks, preflight refusals, local replace) |
 | `tests/test_fs_tools.py` | file-system tools: snippet builders, refusals before sending, refusal-to-error mapping, formatters, MCP annotations, same text from ccctl |
 | `tests/test_ccctl.py` | every MCP tool has a `ccctl` subcommand (and a row below), same request and text as the tool, exit status, `--json`, chunked `write`, `update-bridge` |
+| `tests/test_labels.py` | computer labels: relay target resolution, `ambiguous` / `no_target` messages, ping label refresh, every tool's `computer` accepts a label, ccctl `--computer` |
+| `tests/test_docs.py`, `tests/doc_tools.py` | README's tool table lists exactly the tools the MCP server registers (`selftest_cc.py` checks it too); docs link to it and carry no stale update advice |
+| `tests/test_protocol_docs.py` | the error-kind table in [PROTOCOL.md](PROTOCOL.md) matches `formatting.ERROR_KINDS`, and every kind the code returns is in it |
 | `tests/selftest_cc.py` | end-to-end in headless CraftOS-PC incl. MCP client, reboot, relay restart; run by `tests/test_e2e_craftos.py` (marker `e2e`) or on its own; `CRAFTOS_PC` overrides the emulator path |
 | `.github/workflows/ci.yml` | CI: ruff check / format check, pytest on Python 3.10–3.14 × Linux, Windows, macOS |
 
@@ -49,10 +52,21 @@ For restarts put `shell.run("bridge")` in `startup.lua` (the url/token are saved
 Update the bridge from the PC: `ccctl update-bridge` (uploads the `bridge.lua` shipped with the installed package to
 `bridge.lua` on the computer, atomically), then `ccctl exec "os.reboot()"` (it reports `disconnected`: expected).
 
+Or in-game: `rm bridge.lua`, `wget http://HOST:PORT/bridge.lua bridge.lua`, then `reboot` (wget cannot overwrite).
+
+## Choosing a computer
+
+Tools accept `computer=<id or label>`; labels match exactly ignoring case (no trimming or prefixes).
+A digit string like `"3"` falls back to a valid id only if no label matches (label wins; `"03"` stays a label).
+Duplicates give `ambiguous` (409); missing ids or labels give `not_connected` (404). Use `cc_computers` to list both.
+Omit `computer` with one connected; otherwise `no_target` (409) reports none or lists `#id (label)` pairs.
+Labels refresh on connect and by `cc_ping`; after changing one, ping by id first.
+ccctl `--computer 3` means id 3; relay `--setup` / `--rotate` still require numeric ids.
+
 ## Command line (`ccctl`)
 
 `ccctl` sends the same requests as the MCP tools and prints the same text (markers included); `--json` prints the
-raw result instead. Shared flags, before or after the subcommand: `--json`, `--computer ID`, `--timeout SECONDS`
+raw result instead. Shared flags, before or after the subcommand: `--json`, `--computer ID_OR_LABEL`, `--timeout SECONDS`
 (per request; default 30, `network` 60). Exit status is 1 when the relay or the operation fails, including
 `computers` (relay down, wrong token) and `call` / `batch` when any call fails; otherwise 0.
 
@@ -159,20 +173,19 @@ the recent terminal text (red lines marked `!`) and the `printError` entries wit
 Only one bridge can run per computer (a second `bridge` refuses to start).
 Create a file named `.bridge-debug` on the computer to get a connection trace in `.bridge-debug.log`.
 
-## What comes back (every op)
+## Result fields (when applicable)
 
 | field | meaning |
 |---|---|
 | `ok` | false if the operation failed |
-| `error.kind` | `syntax`, `runtime`, `exit`, `timeout`, `terminated`, `cancelled`, `busy`, `bad_request`, `internal` (relay adds `relay_timeout`, `disconnected`, `not_connected`, `too_large`; the client adds `relay_unreachable`, `local_file`, for `cc_push` `no_space`, `read_only`, `is_directory`, `replace_failed`, and for the file-system tools `not_found`, `exists`, `not_empty`, `read_only`) |
+| `error.kind` | `syntax`, `runtime`, `exit`, `timeout`, `terminated`, `cancelled`, `busy`, `bad_request`, `internal` (relay adds `relay_timeout`, `disconnected`, `too_large`, `unauthorized`, `no_target`, `not_connected`, `ambiguous`; the client adds `relay_unreachable`, `local_file`, for `cc_push` `no_space`, `read_only`, `is_directory`, `replace_failed`, and for the file-system tools `not_found`, `exists`, `not_empty`, `read_only`). Origins, HTTP statuses and meanings: [error kinds](PROTOCOL.md#error-kinds) |
 | `error.message` / `error.traceback` | Lua error text (`exec:3: boom`) and traceback |
 | `stderr` | every `printError(...)` line from the request: how shell reports "No such program" and uncaught program errors |
-| `output` | everything the code drew to the terminal (tail kept past 60 000 chars; `truncated` set) |
+| `output` | everything the code drew to the terminal (tail kept past 60 000 bytes before encoding; further size reduction may keep a prefix; `truncated` set) |
 | `returns` | return values, Lua-serialised |
 | `encoding` | `utf8`, or `bytes` when the data was not valid UTF-8 (binary files, CC border glyphs) |
 
-Ops: `exec` (persistent session env, `reset` clears), `shell`, `read` (`offset`; `next_offset`, `eof`), `write`
-(`append`), `list`, `peripherals`, `log`, `ping`, `cancel`.
+Each bridge op's arguments and result fields: [bridge operations](PROTOCOL.md#bridge-operations).
 
 ## Text output
 
@@ -203,7 +216,7 @@ listings, paths, matched lines and drive names from the file-system tools, perip
 `computers`), `cc_call`/`cc_batch` values and errors, the JSON of unknown operations, and every error
 message and traceback. Error messages are wrapped even when the relay or the client wrote them: the
 formatter cannot tell those apart from a computer reply that claims the same kind. The kind itself is a
-server line (`  error: runtime`) only when it is in `formatting.KNOWN_KINDS`; any other kind goes inside
+server line (`  error: runtime`) only when it is in `formatting.ERROR_KINDS`; any other kind goes inside
 the error block. Status, hints, paging instructions, counts, sizes and durations stay outside the blocks.
 `ccctl` prints the same text, markers included; `ccctl --json` prints the raw result without markers.
 
@@ -299,17 +312,16 @@ and the result says when paths or matches were left out.
 - Requests run through the shell that launched the bridge, so `cd` in the hosted shell does not affect `cc_shell`.
 - Programs that draw straight to `term.native()` bypass the log. Output is the capture terminal's text,
   100 columns wide; interactive programs (`read()`) time out.
-- Text is exact UTF-8 for characters up to U+FFFF; emoji become `?` going in (CC mis-decodes surrogate pairs).
-- CC:Tweaked's `http.websocket_message` defaults to 131,072 bytes (128 KiB), in both directions.
-  The bridge caps encoded results at 120,000 bytes; the relay caps encoded requests at 100,000 bytes.
-  The relay accepts websocket results up to 262,144 bytes so it is not the bottleneck: exceeding aiohttp's
-  receive limit closes the whole connection.
+- Request text supports UTF-8 for characters up to U+FFFF; emoji become `?` going in (CC mis-decodes surrogate pairs). Byte-encoded results have known lossy normalisation (#1 remains open); see [encodings](PROTOCOL.md#sizes-and-encodings).
+- CC:Tweaked caps websocket messages at 128 KiB by default: the relay refuses requests over 100,000 bytes once
+  JSON-encoded (`too_large`) and the bridge keeps results under 120,000 bytes. All size limits:
+  [sizes and encodings](PROTOCOL.md#sizes-and-encodings).
 - `read` returns at most 60,000 bytes (~60 KB) per call, fewer when result encoding needs more space:
-  page with `next_offset`. Captured output keeps a tail of at most 60,000 characters before result encoding.
+  page with `next_offset`. Captured output keeps a tail of at most 60,000 bytes before result encoding.
 - `cc_push` starts with 60,000 characters per chunk and halves until the JSON-escaped chunk fits 75,000
   bytes (halving stops at 500 characters or fewer), leaving 20,000 bytes for the path and the other request fields.
-  Very long paths can still exceed the request limit. For `cc_write`, the ~100 KB limit
-  includes JSON escaping and all request fields; use `cc_push` for large files.
+  Very long paths can still exceed the request limit. For `cc_write`, the 100,000-byte limit
+  counts the whole JSON-escaped request (a non-ASCII character up to 6 bytes); use `cc_push` for large files.
 - `cc_find` and `cc_grep` trim their result lists until the reply fits 100,000 bytes as the bridge sends it,
   and say so ("not all fit in one reply").
 - Requests default to 30 seconds (`cc_network`: 60). The relay waits an extra 5 seconds and the HTTP client an

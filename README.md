@@ -34,6 +34,9 @@ The in-game computer connects *out* to a small relay on your machine, so nothing
 
 Errors come back as data: an `ERROR` line, `error.kind`, message, traceback, hints for known causes and any `printError` output.
 
+With several computers connected, pass `computer=<id or label>` (`cc_ping(computer="reactor")`, `ccctl ping --computer reactor`);
+see [REFERENCE.md](docs/REFERENCE.md#choosing-a-computer) for the matching rules.
+
 Computer data (file contents, output, log lines, labels, peripheral names, error messages) comes back inside `<untrusted source="..." id="...">` ... `</untrusted id="...">` blocks with a random id, so it cannot pose as the server's own lines. `ccctl` has a subcommand for every tool and prints the same text; add `--json` for the raw result.
 
 ## Quick start
@@ -55,7 +58,7 @@ computercraft-live-mcp-relay                                            # run th
 2. On the in-game computer, type the commands `--setup` printed (`wget .../bridge.lua bridge.lua`, then `bridge ws://127.0.0.1:8765/ws <token>`).
 3. Register the MCP server with your client. For Claude Code, copy [`examples/mcp.json.example`](examples/mcp.json.example) to `.mcp.json` and set `CC_MCP_FILES_ROOT`.
 
-Full walkthrough, troubleshooting and the protocol reference: [docs/QUICKSTART.md](docs/QUICKSTART.md), [docs/REFERENCE.md](docs/REFERENCE.md).
+Full walkthrough: [docs/QUICKSTART.md](docs/QUICKSTART.md). Tool usage and limits: [docs/REFERENCE.md](docs/REFERENCE.md). Wire protocol and complete error kinds: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## Configuration
 
@@ -76,14 +79,12 @@ This is a remote shell for a game computer. Keep the relay on loopback or a priv
 
 ```
 pip install -e ".[dev]"
-ruff check . && ruff format --check .
-pytest                        # everything, incl. the CraftOS-PC end-to-end test if the emulator is found
-pytest -m "not e2e"           # quick run: unit and relay tests only
-python tests/selftest_cc.py   # the end-to-end test on its own
+ruff check .
+ruff format --check .
+pytest
 ```
 
-The end-to-end test runs bridge.lua in headless CraftOS-PC (no Minecraft needed). It uses `CRAFTOS_PC` if set, otherwise `%LOCALAPPDATA%\CraftOS-PC\CraftOS-PC_console.exe` (Windows), `craftos` on PATH (Linux) or `/Applications/CraftOS-PC.app/Contents/MacOS/craftos` (macOS), and is skipped with the reason shown when it finds none. Tests use temporary folders and free loopback ports, never your own tokens or CraftOS-PC data.
-
-CI runs ruff and pytest on Python 3.10–3.14 on Linux, Windows and macOS. Known bugs #1 and #5 have strict `xfail` regression tests: drop the mark when fixing them.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for test options, CraftOS-PC setup and testing bridge changes in game, and
+[CHANGELOG.md](CHANGELOG.md) for what changed.
 
 Tested with Python 3.14, CC:Tweaked on Minecraft 1.21.1 (NeoForge) and CraftOS-PC. MIT licensed.

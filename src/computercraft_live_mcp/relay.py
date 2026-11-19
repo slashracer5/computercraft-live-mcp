@@ -368,7 +368,7 @@ class Conn:
     def __init__(self, ws, hello: dict, remote: str | None = None, tokens=(), auth: str | None = None):
         self.ws = ws
         self.id = int(hello.get("id", 0))
-        self.label = hello.get("label")
+        self.label = hello.get("label") if isinstance(hello.get("label"), str) else None
         self.host = hello.get("host")
         self.connected_at = time.time()
         self.opened_at = time.monotonic()
@@ -521,6 +521,47 @@ class Conn:
             log.warning("computer #%s unexpected reply req=%s", self.id, rid if rid is not None else "invalid")
 
 
+def label_text(label: str) -> str:
+    """One-line, bounded label text for error messages (without surrounding quotes)."""
+    return json.dumps(label[:32] + ("..." if len(label) > 32 else ""))[1:-1]
+
+
+def resolve_target(computers: dict[int, Conn], target) -> Conn | tuple[str, str, int]:
+    """Resolve an id or exact, case-insensitive label, or return (kind, message, status)."""
+    if target is None:
+        if len(computers) == 1:
+            return next(iter(computers.values()))
+        if not computers:
+            return "no_target", "no computer is connected", 409
+        pairs = ", ".join(
+            f"#{c.id} ({label_text(c.label) if c.label is not None else 'no label'})" for c in computers.values()
+        )
+        return "no_target", f"{len(computers)} computers connected ({pairs}); pass 'computer' (an id or a label)", 409
+    if isinstance(target, str) and target:
+        matches = [c for c in computers.values() if c.label is not None and c.label.casefold() == target.casefold()]
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            ids = ", ".join(f"#{c.id}" for c in matches)
+            message = f'{len(matches)} computers are labelled "{label_text(target)}" ({ids}); pass the id'
+            return "ambiguous", message, 409
+        cid = computer_id(int(target)) if COMPUTER_KEY.fullmatch(target) else None
+        if cid is None:
+            return (
+                "not_connected",
+                f'no connected computer is labelled "{label_text(target)}" '
+                "(labels are read on connect and refreshed by cc_ping; cc_computers lists them)",
+                404,
+            )
+        target = cid
+    cid = computer_id(target)
+    if cid is None:
+        return "bad_request", "computer must be an id or a label", 400
+    if cid not in computers:
+        return "not_connected", f"computer {cid} is not connected", 404
+    return computers[cid]
+
+
 def make_app(tokens: dict, reload=None) -> web.Application:
     """`reload` (a TokenReloader) is asked for changed tokens before each hello and API request."""
     computers: dict[int, Conn] = {}
@@ -652,29 +693,28 @@ def make_app(tokens: dict, reload=None) -> web.Application:
             log.info("#- unknown req=- queued=0.00s rtt=0.00s outcome=bad_request req_bytes=- resp_bytes=-")
             return web.json_response(err("bad_request", "body must be JSON"), status=400)
         target = body.pop("computer", None)
-        if target is None:
-            if len(computers) != 1:
-                log.info(
-                    "#- %s req=- queued=0.00s rtt=0.00s outcome=no_target req_bytes=- resp_bytes=-",
-                    operation(body),
-                )
-                ids = ", ".join(f"#{c}" for c in computers) or "none"
-                return web.json_response(
-                    err("no_target", f"{len(computers)} computers connected ({ids}); pass 'computer'"),
-                    status=409,
-                )
-            conn = next(iter(computers.values()))
-        else:
-            conn = computers.get(int(target))
-            if conn is None:
-                log.info(
-                    "#%s %s req=- queued=0.00s rtt=0.00s outcome=not_connected req_bytes=- resp_bytes=-",
-                    int(target),
-                    operation(body),
-                )
-                return web.json_response(err("not_connected", f"computer {target} is not connected"), status=404)
+        conn = resolve_target(computers, target)
+        if isinstance(conn, tuple):
+            kind, message, status = conn
+            cid = computer_id(target)
+            if kind == "not_connected" and isinstance(target, str) and COMPUTER_KEY.fullmatch(target):
+                cid = computer_id(int(target))
+            log.info(
+                "#%s %s req=- queued=0.00s rtt=0.00s outcome=%s req_bytes=- resp_bytes=-",
+                cid if cid is not None else "-",
+                operation(body),
+                kind,
+            )
+            return web.json_response(err(kind, message), status=status)
         timeout = float(body.get("timeout", DEFAULT_TIMEOUT))
         result = await conn.call(body, timeout + RELAY_TIMEOUT_MARGIN)
+        if body.get("op") == "ping" and result.get("ok") and computer_id(result.get("id")) == conn.id:
+            label = result.get("label") if isinstance(result.get("label"), str) else None
+            if label != conn.label:
+                conn.label = label
+                log.info(
+                    "computer #%s label changed label=%s", conn.id, conn.snippet(label) if label is not None else None
+                )
         return web.json_response(result)
 
     async def healthz(request):
