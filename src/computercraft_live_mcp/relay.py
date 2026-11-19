@@ -7,9 +7,11 @@ Two endpoints on one port:
   GET  /api/computers connected computers
   GET  /healthz       liveness
 
-Two separate secrets: the COMPUTER token (lives on the in-game computer's disk)
-and the API token (used by ccctl / the MCP shim). Leaking the first must not
-give anyone the control API.
+Separate secrets in tokens.json: one COMPUTER token per computer id (it lives on
+that computer's disk and only lets it connect as that id) and the API token (used
+by ccctl / the MCP shim). Leaking a computer token must not give anyone the
+control API, nor another computer's connection. The old shared computer token
+still works, with a deprecation warning, for ids that have no token of their own.
 
 Dependencies: aiohttp.
 """
@@ -19,6 +21,7 @@ import asyncio
 import ipaddress
 import json
 import logging
+import os
 import re
 import secrets
 import socket
@@ -38,6 +41,9 @@ SNIPPET_CHARS = 200
 # Ops and error kinds are logged only when they look like protocol names, so arbitrary
 # text (newlines, content, token-like strings) from a caller or a computer stays out of the log.
 PROTOCOL_NAME = re.compile(r"[a-z][a-z_]{0,31}")
+COMPUTER_KEY = re.compile(r"0|[1-9][0-9]{0,9}")  # keys of tokens.json "computers": canonical ids only
+MAX_COMPUTER_ID = 2**31  # CC computer ids are Java ints
+PRIVATE_FILE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
 log = logging.getLogger("computercraft_live_mcp.relay")
 _log_handlers: list[logging.Handler] = []
 
@@ -98,25 +104,199 @@ def remember(records: dict, rid: int, value) -> None:
         records.pop(next(iter(records)))
 
 
-def load_tokens() -> dict:
+def computer_id(value) -> int | None:
+    """A computer id as claimed in a hello: a non-negative integer below 2**31 (12.0 counts as 12)."""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < MAX_COMPUTER_ID:
+        return value
+    return None
+
+
+def new_token() -> str:
+    return secrets.token_urlsafe(24)
+
+
+def same_secret(given, expected) -> bool:
+    """Constant-time comparison that accepts any text (non-ASCII, lone surrogates) and never matches an empty token."""
+    if not isinstance(given, str) or not isinstance(expected, str) or not expected:
+        return False
+    return secrets.compare_digest(given.encode("utf-8", "surrogatepass"), expected.encode("utf-8", "surrogatepass"))
+
+
+def check_token(tokens: dict, cid: int, token) -> tuple[str | None, str | None]:
+    """May `token` connect as computer `cid`? (auth, None) with auth "own_token" or "shared_token", else
+    (None, reason). The shared token (deprecated) only works for ids that have no token of their own."""
+    computers = tokens.get("computers") or {}
+    own = computers.get(str(cid))
+    if own is not None:
+        if same_secret(token, own):
+            return "own_token", None
+        if same_secret(token, tokens.get("computer")):
+            return None, "shared token not valid for this id (it has its own token)"
+    elif same_secret(token, tokens.get("computer")):
+        return "shared_token", None
+    for other, value in computers.items():
+        if same_secret(token, value):
+            return None, f"token not valid for this id (it is computer #{other}'s token)"
+    return None, "wrong token"
+
+
+def token_file_problem(data) -> str | None:
+    """Why stored token data is unusable, or None. Strict, so a hand edit cannot loosen the id binding
+    (e.g. "03" would never match computer 3, letting the shared token through). Never quotes values."""
+    if not isinstance(data, dict):
+        return "expected a JSON object"
+    for key in ("api", "computer"):
+        if key in data and not (isinstance(data[key], str) and data[key]):
+            return f'"{key}" must be a non-empty string'
+    computers = data.get("computers", {})
+    if not isinstance(computers, dict):
+        return '"computers" must map computer ids to tokens'
+    for key, value in computers.items():
+        if not COMPUTER_KEY.fullmatch(key) or computer_id(int(key)) is None:
+            return 'every key in "computers" must be a computer id such as "3"'
+        if not (isinstance(value, str) and value):
+            return f'"computers" entry {key} must be a non-empty string'
+    return None
+
+
+def read_tokens(path: Path) -> dict:
+    """tokens.json as stored ({} if it does not exist); raises ValueError if it is unusable."""
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as e:
+        raise ValueError(f"{path} is not valid JSON ({e})") from None
+    problem = token_file_problem(data)
+    if problem:
+        raise ValueError(f"{path}: {problem}")
+    return data
+
+
+def write_private(path: Path, data: bytes) -> None:
+    """Create `path` readable by its owner only from the first byte. O_EXCL: fails if it exists, even as a symlink.
+    On Windows the mode only controls read-only; the file inherits the folder's permissions."""
+    fd = os.open(path, PRIVATE_FILE_FLAGS, 0o600)
+    try:
+        with open(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def save_tokens(path: Path, tokens: dict, create: bool = False) -> None:
+    """A new tokens.json is created in place with O_EXCL; an update is written to a private temp file in the
+    same folder and swapped in with os.replace, so nobody sees a partial or briefly world-readable file."""
+    data = (json.dumps(tokens, indent=2) + "\n").encode()
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if create:
+        write_private(path, data)
+        return
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    write_private(tmp, data)
+    try:
+        for attempt in range(5):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:  # Windows: a reader has tokens.json open for a moment
+                if os.name != "nt" or attempt == 4:
+                    raise
+                time.sleep(0.05)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def env_overrides() -> dict:
     config = get_config()
-    path = config.home / "tokens.json"
-    tokens = json.loads(path.read_text()) if path.exists() else {}
-    changed = False
-    for key, override in (("computer", config.computer_token), ("api", config.api_token)):
-        if override:
-            tokens[key] = override
-        elif key not in tokens:
-            tokens[key] = secrets.token_urlsafe(24)
-            changed = True
-    if changed:
-        config.home.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(tokens, indent=2))
+    return {key: value for key, value in (("api", config.api_token), ("computer", config.computer_token)) if value}
+
+
+def stored_tokens() -> dict:
+    """tokens.json as stored, after generating (and saving) a missing API or shared token not set by the env."""
+    path = get_config().tokens_file
+    existed = path.exists()
+    stored = read_tokens(path)
+    missing = [key for key in ("computer", "api") if key not in stored and key not in env_overrides()]
+    for key in missing:
+        stored[key] = new_token()
+    if missing:
+        save_tokens(path, stored, create=not existed)
+    return stored
+
+
+def load_tokens() -> dict:
+    """The tokens the relay checks: tokens.json plus CC_MCP_API_TOKEN / CC_MCP_COMPUTER_TOKEN (never saved)."""
+    return {**stored_tokens(), **env_overrides()}
+
+
+def token_for_computer(cid: int) -> tuple[str, bool]:
+    """The token for computer `cid`: (token, newly issued). Issued and saved if it has none yet."""
+    stored = stored_tokens()
+    computers = stored.get("computers", {})
+    if str(cid) in computers:
+        return computers[str(cid)], False
+    stored["computers"] = {**computers, str(cid): new_token()}
+    save_tokens(get_config().tokens_file, stored)
+    return stored["computers"][str(cid)], True
+
+
+def rotate_tokens(which: str, cid: int | None = None) -> dict:
+    """Replace tokens in tokens.json. which: "api", "computer" (the shared token and every per-computer token,
+    or only `cid`'s) or "all". Returns what changed: {"api": bool, "shared": bool, "computers": {id: token}}."""
+    stored = stored_tokens()
+    computers = dict(stored.get("computers", {}))
+    changed = {"api": which in ("api", "all"), "shared": False, "computers": {}}
+    if changed["api"]:
+        stored["api"] = new_token()
+    if which in ("computer", "all"):
+        changed["shared"] = cid is None
+        if changed["shared"]:
+            stored["computer"] = new_token()
+        for key in [str(cid)] if cid is not None else list(computers):
+            computers[key] = changed["computers"][int(key)] = new_token()
+    if computers:
+        stored["computers"] = computers
+    save_tokens(get_config().tokens_file, stored)
+    return changed
+
+
+def file_stamp(path: Path):
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size, st.st_ino
+
+
+class TokenReloader:
+    """Lets a running relay follow tokens.json, so --setup and --rotate take effect without a restart."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.stamp = file_stamp(path)
+
+    def __call__(self) -> dict | None:
+        """The new tokens if the file changed since the last look, else None (also when it is unusable)."""
+        stamp = file_stamp(self.path)
+        if stamp == self.stamp:
+            return None
+        self.stamp = stamp
         try:
-            path.chmod(0o600)
-        except OSError:
-            pass
-    return tokens
+            tokens = {**read_tokens(self.path), **env_overrides()}
+            missing = [key for key in ("api", "computer") if key not in tokens]
+            if missing:
+                raise ValueError(f"{self.path} has no {' or '.join(missing)} token")
+        except (OSError, ValueError) as e:
+            log.warning("tokens.json changed but cannot be used (%s); keeping the previous tokens", e)
+            return None
+        return tokens
 
 
 def bmp_only(obj):
@@ -185,7 +365,7 @@ def normalise(res: dict) -> dict:
 
 
 class Conn:
-    def __init__(self, ws, hello: dict, remote: str | None = None, tokens=()):
+    def __init__(self, ws, hello: dict, remote: str | None = None, tokens=(), auth: str | None = None):
         self.ws = ws
         self.id = int(hello.get("id", 0))
         self.label = hello.get("label")
@@ -194,6 +374,12 @@ class Conn:
         self.opened_at = time.monotonic()
         self.remote = remote
         self.secrets = secret_values(tokens)  # redacted from anything echoed into the log
+        self.auth = auth  # "own_token", or "shared_token" (deprecated)
+        self.token = hello.get("token")  # re-checked when tokens.json changes
+        # Takeovers of this id, carried over from the connection this one replaced.
+        self.replacements = 0
+        self.replaced_at: float | None = None
+        self.previous_remote: str | None = None
         self.pending: dict[int, asyncio.Future] = {}
         self.response_sizes: dict[int, int] = {}
         self.timed_out: dict[int, tuple[str, float]] = {}  # bounded: rid -> (op, sent at), to spot late replies
@@ -207,6 +393,11 @@ class Conn:
             "label": self.label,
             "host": self.host,
             "connected_for_s": round(time.time() - self.connected_at),
+            "remote": self.remote,
+            "auth": self.auth,
+            "replacements": self.replacements,
+            "last_replaced_s_ago": None if self.replaced_at is None else round(time.time() - self.replaced_at),
+            "previous_remote": self.previous_remote,
         }
 
     def snippet(self, text: str) -> str:
@@ -330,12 +521,32 @@ class Conn:
             log.warning("computer #%s unexpected reply req=%s", self.id, rid if rid is not None else "invalid")
 
 
-def make_app(tokens: dict) -> web.Application:
+def make_app(tokens: dict, reload=None) -> web.Application:
+    """`reload` (a TokenReloader) is asked for changed tokens before each hello and API request."""
     computers: dict[int, Conn] = {}
+    closing: set[asyncio.Task] = set()
+
+    def current_tokens() -> dict:
+        nonlocal tokens
+        fresh = reload() if reload else None
+        if fresh is not None:
+            tokens = fresh
+            log.info("tokens.json changed; tokens reloaded")
+            for conn in list(computers.values()):
+                conn.secrets = secret_values(tokens)
+                conn.auth, _ = check_token(tokens, conn.id, conn.token)
+                if conn.auth is None:
+                    # Dropped from the table at once, so no request reaches it while the close completes.
+                    del computers[conn.id]
+                    log.warning("computer #%s token no longer valid; disconnecting remote=%s", conn.id, conn.remote)
+                    task = asyncio.ensure_future(conn.ws.close(code=4401, message=b"unauthorized"))
+                    closing.add(task)
+                    task.add_done_callback(closing.discard)
+        return tokens
 
     def authorized(request) -> bool:
         got = request.headers.get("Authorization", "")
-        ok = secrets.compare_digest(got, "Bearer " + tokens["api"])
+        ok = same_secret(got, "Bearer " + current_tokens()["api"])
         if not ok:
             log.warning("unauthorized API request remote=%s", request.remote)
         return ok
@@ -354,36 +565,54 @@ def make_app(tokens: dict) -> web.Application:
             reason = "not JSON"
         if not isinstance(hello, dict):
             hello = {}
+        # Only valid numeric ids reach the log or the token check; never echo arbitrary handshake fields.
+        cid = computer_id(hello.get("id"))
+        auth = None
         if reason is None:
             if hello.get("type") != "hello":
                 reason = "not a hello"
-            elif not secrets.compare_digest(str(hello.get("token", "")), tokens["computer"]):
-                reason = "wrong token"
+            elif cid is None:
+                reason = "bad id"
+            else:
+                auth, reason = check_token(current_tokens(), cid, hello.get("token"))
         if reason:
-            claimed_id = hello.get("id")
-            # Only numeric ids belong in logs; never echo arbitrary handshake fields.
-            try:
-                claimed_id = int(claimed_id)
-            except (TypeError, ValueError, OverflowError):
-                claimed_id = "-"
+            claimed_id = "-" if cid is None else cid
             log.warning("rejected hello remote=%s reason=%s claimed_id=%s", request.remote, reason, claimed_id)
             await ws.close(code=4401, message=b"unauthorized")
             return ws
-        conn = Conn(ws, hello, remote=request.remote, tokens=tokens)
+        conn = Conn(ws, hello, remote=request.remote, tokens=tokens, auth=auth)
         old = computers.get(conn.id)
         if old:
+            conn.replacements = old.replacements + 1
+            conn.replaced_at = time.time()
+            conn.previous_remote = old.remote
             log.warning(
-                "computer #%s replaced connection old_remote=%s new_remote=%s open=%.2fs",
+                "computer #%s replaced connection old_remote=%s new_remote=%s open=%.2fs replacements=%s",
                 conn.id,
                 old.remote,
                 conn.remote,
                 time.monotonic() - old.opened_at,
+                conn.replacements,
             )
             await old.ws.close(code=4000, message=b"replaced")
+            # tokens.json may have been reloaded while the old connection was closing.
+            conn.auth, reason = check_token(tokens, conn.id, conn.token)
+            if reason:
+                log.warning("rejected hello remote=%s reason=%s claimed_id=%s", request.remote, reason, conn.id)
+                await ws.close(code=4401, message=b"unauthorized")
+                return ws
         computers[conn.id] = conn
         await ws.send_json({"type": "welcome"})
         label = conn.snippet(conn.label) if isinstance(conn.label, str) else None
         log.info("computer #%s connected label=%s remote=%s", conn.id, label, conn.remote)
+        if conn.auth == "shared_token":
+            log.warning(
+                "computer #%s connected with the shared computer token, which is deprecated and will stop working "
+                "in a future release: run `computercraft-live-mcp-relay --setup --computer %s` and type the printed "
+                "commands on that computer",
+                conn.id,
+                conn.id,
+            )
         try:
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
@@ -492,12 +721,36 @@ def _is_loopback(host: str) -> bool:
     return address.is_loopback
 
 
+def computer_arg(text: str) -> int:
+    cid = computer_id(int(text)) if re.fullmatch(r"[0-9]{1,10}", text) else None
+    if cid is None:
+        raise argparse.ArgumentTypeError(f"not a computer id: {text!r} (type `id` on the computer to see its id)")
+    return cid
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
-    p.add_argument("--show-tokens", action="store_true", help="print both tokens and exit")
-    p.add_argument("--setup", action="store_true", help="print the exact in-game commands and exit")
+    action = p.add_mutually_exclusive_group()
+    action.add_argument("--show-tokens", action="store_true", help="print the tokens and exit")
+    action.add_argument(
+        "--setup",
+        action="store_true",
+        help="issue (or reuse) the token for --computer ID, print the exact in-game commands and exit",
+    )
+    action.add_argument(
+        "--rotate",
+        choices=("api", "computer", "all"),
+        help="replace tokens, print what to update and exit: the API token, the computer tokens "
+        "(every one, or only --computer ID's), or all of them",
+    )
+    p.add_argument(
+        "--computer",
+        type=computer_arg,
+        metavar="ID",
+        help="computer id for --setup and --rotate computer (type `id` on the computer to see it)",
+    )
     p.add_argument(
         "--advertise-host",
         help="host or IP for --setup (defaults to the bind host or a detected local IP)",
@@ -513,41 +766,23 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main():
-    p = build_parser()
-    a = p.parse_args()
-    if a.setup and not a.show_tokens:
-        host = (a.advertise_host or a.host).removeprefix("[").removesuffix("]")
-        if a.advertise_host is None and host in {"0.0.0.0", "::"}:
-            try:
-                host = _default_route_address(host)
-            except OSError:
-                p.error("could not detect a local IP address; set --advertise-host")
-            print(
-                f"[relay] using detected address {host}; set --advertise-host if unreachable from the game",
-                file=sys.stderr,
-            )
-        if host in {"0.0.0.0", "::"}:
-            p.error("--advertise-host must be an address that the game can connect to")
-    tokens = load_tokens()
-    if a.show_tokens:
-        print(json.dumps(tokens, indent=2))
-        return
-    if a.setup:
-        url_host = f"[{host}]" if ":" in host else host
-        base = f"{url_host}:{a.port}"
-        print(f"""On a server you control, add this to the CC:Tweaked server config above
+def setup_text(host: str, port: int, cid: int, token: str, new: bool) -> str:
+    state = "New token" if new else f"Existing token (`--rotate computer --computer {cid}` replaces it)"
+    base = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+    return f"""{state} for computer #{cid}. It only works for computer #{cid}: type `id` on the computer to check.
+
+On a server you control, add this to the CC:Tweaked server config above
 the existing $private rule and restart the world:
 
     [[http.rules]]
         host = {json.dumps(host, ensure_ascii=False)}
-        port = {a.port}
+        port = {port}
         action = "allow"
 
-In-game, on the computer (once per computer):
+In-game, on computer #{cid} (skip `wget` if bridge.lua is already there; if the bridge is running, type `exit` first):
 
     wget http://{base}/bridge.lua bridge.lua
-    bridge ws://{base}/ws {tokens["computer"]}
+    bridge ws://{base}/ws {token}
 
 To start it automatically whenever the computer boots, also run:
 
@@ -556,7 +791,73 @@ To start it automatically whenever the computer boots, also run:
         shell.run("bridge")
 
 The relay must be running (computercraft-live-mcp-relay), but the order does not matter: the bridge retries
-until the relay is up. `exit` in the computer's shell stops the bridge.""")
+until the relay is up, and a running relay picks up new tokens by itself. `exit` in the computer's shell
+stops the bridge."""
+
+
+def rotate_text(base: str, changed: dict) -> str:
+    config = get_config()
+    parts = []
+    if changed["api"]:
+        text = (
+            "New API token saved in tokens.json. ccctl and the MCP server read it from there on every call; if your\n"
+            "MCP client config or shell sets CC_MCP_API_TOKEN, put the new value there (--show-tokens prints it)."
+        )
+        if config.api_token:
+            text += "\nCC_MCP_API_TOKEN is set in this shell, so it still overrides tokens.json here."
+        parts.append(text)
+    if changed["shared"]:
+        text = (
+            "The shared computer token (deprecated) was replaced too. Computers that used it are refused until you\n"
+            "run `computercraft-live-mcp-relay --setup --computer <id>` for each and type the printed commands there."
+        )
+        if config.computer_token:
+            text += "\nCC_MCP_COMPUTER_TOKEN is set in this shell, so it still overrides the shared token here."
+        parts.append(text)
+    for cid, token in sorted(changed["computers"].items()):
+        parts.append(
+            f"On computer #{cid}, type `exit` if the bridge is running, then:\n\n    bridge ws://{base}/ws {token}"
+        )
+    parts.append(
+        "A running relay reloads tokens.json on its next connection or API request and disconnects computers\n"
+        "whose token was replaced."
+    )
+    return "\n\n".join(parts)
+
+
+def main(argv=None):
+    parser = build_parser()
+    a = parser.parse_args(argv)
+    if a.setup and a.computer is None:
+        parser.error("--setup needs --computer ID: each computer gets its own token (type `id` on it to see its id)")
+    if a.computer is not None and not (a.setup or a.rotate == "computer"):
+        parser.error("--computer goes with --setup or --rotate computer")
+    base = f"{a.host}:{a.port}"
+    if a.setup:
+        host = (a.advertise_host or a.host).removeprefix("[").removesuffix("]")
+        if a.advertise_host is None and host in {"0.0.0.0", "::"}:
+            try:
+                host = _default_route_address(host)
+            except OSError:
+                parser.error("could not detect a local IP address; set --advertise-host")
+            print(
+                f"[relay] using detected address {host}; set --advertise-host if unreachable from the game",
+                file=sys.stderr,
+            )
+        if host in {"0.0.0.0", "::"}:
+            parser.error("--advertise-host must be an address that the game can connect to")
+    try:
+        if a.setup:
+            print(setup_text(host, a.port, a.computer, *token_for_computer(a.computer)))
+            return
+        if a.rotate:
+            print(rotate_text(base, rotate_tokens(a.rotate, a.computer)))
+            return
+        tokens = load_tokens()
+    except (OSError, ValueError) as e:
+        sys.exit(f"computercraft-live-mcp-relay: {e}")
+    if a.show_tokens:
+        print(json.dumps(tokens, indent=2))
         return
     if not _is_loopback(a.host):
         print(
@@ -566,8 +867,9 @@ until the relay is up. `exit` in the computer's shell stops the bridge.""")
             file=sys.stderr,
         )
     setup_logging(a.log_level, a.log_file)
-    log.info("listening on %s:%s; tokens in %s", a.host, a.port, get_config().home / "tokens.json")
-    web.run_app(make_app(tokens), host=a.host, port=a.port, print=None)
+    path = get_config().tokens_file
+    log.info("listening on %s:%s; tokens in %s", a.host, a.port, path)
+    web.run_app(make_app(tokens, TokenReloader(path)), host=a.host, port=a.port, print=None)
 
 
 if __name__ == "__main__":

@@ -64,7 +64,9 @@ async def _call(op: str, computer: int | None, timeout: float, **args) -> str:
 
 @server.tool(annotations=READ_ONLY)
 async def cc_computers() -> str:
-    """List connected computers: id, label, host version and connected time."""
+    """List the in-game computers currently connected to the relay (id, label, game version, peer address).
+    `replacements` counts connections that took over an id (normal after a reboot); tell the user if it keeps
+    rising or `previous_remote` is an unknown address, and if `auth` is `shared_token` (deprecated)."""
     res = await asyncio.to_thread(bc.request, "/api/computers")
     return format_result("computers", res)
 
